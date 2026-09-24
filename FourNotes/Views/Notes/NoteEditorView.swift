@@ -1,0 +1,1024 @@
+import AppKit
+import SwiftUI
+
+// The note editor: header actions, the formatting toolbar, the title, the
+// writing surface, and the footer with tags, reminders and linked items.
+// Ported from src/components/notes/NoteEditor.tsx.
+
+private let FONTS: [(label: String, value: String)] = [
+    ("Sans Serif", ""),
+    ("Serif", "Georgia"),
+    ("Monospace", "Menlo"),
+    ("Rounded", "SF Pro Rounded"),
+]
+
+private let SIZES: [CGFloat] = [12, 14, 16, 18, 20, 24, 30]
+
+private let TEXT_COLORS: [(label: String, value: String)] = [
+    ("Default", ""), ("Gray", "#787774"), ("Red", "#d4351c"), ("Orange", "#b85c00"),
+    ("Yellow", "#946b00"), ("Green", "#0f7b6c"), ("Blue", "#2f6fdd"),
+    ("Purple", "#9065b0"), ("Pink", "#c14c8a"),
+]
+
+private let HIGHLIGHTS: [(label: String, value: String)] = [
+    ("None", ""), ("Yellow", "#fde68a"), ("Green", "#bbf7d0"), ("Blue", "#bfdbfe"),
+    ("Pink", "#fbcfe8"), ("Purple", "#ddd6fe"), ("Orange", "#fed7aa"),
+]
+
+/// Where a note came from, when it was not typed here.
+private let SOURCE_NAME: [NoteSource: String] = [
+    .chat: "Written by the assistant", .ocr: "Scanned", .recording: "Voice recording", .share: "Shared",
+]
+
+private extension String {
+    /// "road-trip" -> "Road-trip": tags are stored lower case, shown like the
+    /// reference's chips.
+    var capitalizedTag: String { prefix(1).uppercased() + dropFirst() }
+}
+
+private extension WriteTask {
+    /// What the result is called in the preview card.
+    var result: String {
+        switch self {
+        case .summarize: return "Summary"
+        case .improve: return "Improved writing"
+        case .fix: return "Corrected text"
+        case .shorter: return "Shorter version"
+        case .continue: return "Continuation"
+        }
+    }
+}
+
+/// A model's rewrite, shown for review before it touches the note.
+private struct AISuggestion {
+    let task: WriteTask
+    let text: String
+    /// The selection it was made from, or nil for the whole note.
+    let range: NSRange?
+}
+
+struct NoteEditorView: View {
+    @Environment(\.palette) private var p
+    @EnvironmentObject private var store: Store
+    @EnvironmentObject private var nav: Navigation
+    @EnvironmentObject private var toasts: ToastCenter
+    @EnvironmentObject private var engine: AIEngine
+
+    let note: Note
+    var listHidden: Bool
+    var onToggleList: () -> Void
+    var focusMode: Bool
+    var onToggleFocus: () -> Void
+
+    @StateObject private var controller = RichTextController()
+    @State private var attributed = NSAttributedString()
+    @State private var title = ""
+    @State private var saving = false
+    @State private var aiRunning: WriteTask?
+    @State private var suggestion: AISuggestion?
+    @State private var tagDraft: String?
+    @State private var showLinkSheet = false
+    @State private var linkURL = ""
+    @State private var showReminderPicker = false
+    @State private var reminderAt = Date()
+    @State private var loadedNoteId = ""
+    @State private var pendingSave: Task<Void, Never>?
+    /// This editor's entry in PendingWrites, so quitting writes what's waiting.
+    @State private var writeId = UUID()
+
+    private var linkedTodos: [Todo] { store.liveTodos.filter { $0.noteId == note.id } }
+    private var linkedTxs: [Transaction] { store.liveTransactions.filter { $0.noteId == note.id } }
+
+    var body: some View {
+        // A flat pane: breadcrumb, the formatting toolbar along the top, then
+        // the title and the note's properties, then the writing.
+        VStack(spacing: 0) {
+            header
+            rule
+            toolbar
+                .padding(.horizontal, 18)
+            rule
+            writingArea
+            linkedRow
+            footer
+        }
+        .background(p.bg)
+        .motion(focusMode, Motion.screen)
+        .background {
+            // Escape leaves focus mode, as it does on the web — unless it is
+            // closing the tag field.
+            if focusMode && tagDraft == nil {
+                Button("Exit focus mode", action: onToggleFocus)
+                    .keyboardShortcut(.escape, modifiers: [])
+                    .opacity(0)
+                    .accessibilityHidden(true)
+            }
+        }
+        .onAppear(perform: load)
+        .onChange(of: note.id) { _, _ in load() }
+        .sheet(isPresented: $showLinkSheet) { linkSheet }
+    }
+
+    // MARK: - Loading and saving
+
+    private func load() {
+        guard loadedNoteId != note.id else { return }
+        loadedNoteId = note.id
+        title = note.title
+        attributed = Self.document(for: note)
+        suggestion = nil
+        tagDraft = nil
+    }
+
+    /// The note as something editable. A note this app has opened before has
+    /// its own representation; one from the web app has HTML; anything else is
+    /// rebuilt from the plain text, which carries the structure.
+    static func document(for note: Note) -> NSAttributedString {
+        if let data = note.richText, let restored = NoteDocument.unarchive(data) { return restored }
+        if let html = note.html, !html.isEmpty,
+           let imported = NoteDocument.attributed(fromHTML: html) { return imported }
+        return NoteDocument.attributed(fromPlainText: note.content)
+    }
+
+    private func save(_ next: NSAttributedString) {
+        saving = true
+        pendingSave?.cancel()
+        // Writing is debounced off the keystroke path: it used to serialise the
+        // whole document to HTML and regex every line on every character typed.
+        PendingWrites.hold(writeId) { commit(next) }
+        pendingSave = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            commit(next)
+        }
+    }
+
+    private func commit(_ document: NSAttributedString) {
+        PendingWrites.release(writeId)
+        pendingSave?.cancel()
+        let plain = NoteDocument.plainText(from: document)
+        // Only keep the native form when it carries something the plain text
+        // cannot: bold, colour, a link. Structure round-trips as text.
+        let archive = NoteDocument.hasInlineFormatting(document)
+            ? NoteDocument.archive(document)
+            : nil
+
+        store.updateNote(note.id) {
+            $0.content = plain
+            $0.richText = archive
+            // The HTML a note came with from the web app is now out of date.
+            // Left in place, reopening the note loaded it again and the next
+            // keystroke wrote the old text back. It is regenerated on export.
+            $0.html = nil
+        }
+        syncLinkedTodos(plain)
+        saving = false
+    }
+
+    /// Ticking a checklist box keeps a linked to-do of the same name in step.
+    private func syncLinkedTodos(_ plain: String) {
+        let states = NoteText.taskStates(plain)
+        guard !states.isEmpty else { return }
+        for todo in linkedTodos {
+            let key = todo.title.trimmingCharacters(in: .whitespaces)
+            if let checked = states[key], checked != todo.done {
+                store.toggleTodo(todo.id, done: checked)
+            }
+        }
+    }
+
+    private func saveTitle(_ next: String) {
+        store.updateNote(note.id) { $0.title = next.replacingOccurrences(of: "\n", with: " ") }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 4) {
+            if !focusMode {
+                IconButton(listHidden ? "collapseRight" : "collapseLeft", size: 20, box: 30,
+                           help: listHidden ? "Show note list" : "Hide note list", action: onToggleList)
+            }
+            IconButton(focusMode ? "shrink" : "expand", size: 18, box: 30,
+                       help: focusMode ? "Exit focus mode (Esc)" : "Focus mode", action: onToggleFocus)
+
+            Rectangle().fill(p.line).frame(width: 1, height: 22).padding(.horizontal, 4)
+
+            HStack(spacing: 6) {
+                Text("Notes").foregroundStyle(p.muted)
+                Icon("chevron", size: 12).foregroundStyle(p.muted)
+                Text(title.isEmpty ? "Untitled" : title).foregroundStyle(p.text)
+            }
+            .font(FN.body)
+            .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 0) {
+                Button(action: share) {
+                    HStack(spacing: 6) {
+                        Icon("share", size: 15)
+                        Text("Share").font(FN.bodyMedium)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.fn)
+
+                Rectangle().fill(.white.opacity(0.25)).frame(width: 1, height: 32)
+
+                Button(action: copyText) {
+                    Icon("copy", size: 15)
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.fn)
+                .help("Copy note text")
+            }
+            .background(p.accent, in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
+            .fixedSize()
+
+            IconMenu("more", size: 20, help: "More actions") {
+                [
+                    .item(EdgeStickies.shared.isStuck(note.id) ? "Take off screen edge" : "Stick to screen edge",
+                          action: { EdgeStickies.shared.toggle(note.id) }),
+                    .item("Duplicate", action: duplicate),
+                    .item("Download as text…", action: downloadText),
+                    .item("Print…", action: printNote),
+                    .divider,
+                    .item("Delete note", destructive: true, action: deleteNote),
+                ]
+            }
+        }
+        .padding(.horizontal, 30)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+    }
+
+    /// A hairline between sections, inset to the content like the reference.
+    private var rule: some View {
+        Rectangle().fill(p.line).frame(height: 1).padding(.horizontal, 36)
+    }
+
+    /// The text column's width and where it sits: against the left edge beside
+    /// the list, centred when the editor has the window to itself.
+    private func column<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .frame(maxWidth: focusMode ? 800 : 760, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: focusMode ? .center : .leading)
+            .padding(.horizontal, focusMode ? 48 : 36)
+    }
+
+    // MARK: - Title and properties
+
+    private static let stamp: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US")
+        f.dateFormat = "MMMM d, yyyy 'at' h:mm a"
+        return f
+    }()
+
+    private func stamp(_ iso: String) -> String {
+        DateKit.date(iso).map { Self.stamp.string(from: $0) } ?? ""
+    }
+
+    private var titleBlock: some View {
+        column {
+            VStack(alignment: .leading, spacing: 0) {
+                CommittedField(placeholder: "Untitled", value: note.title,
+                               font: FN.serif(34), axis: .vertical,
+                               onCommit: saveTitle)
+                    .tracking(-0.4)
+                    .foregroundStyle(p.text)
+                    .padding(.bottom, 16)
+
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 10) {
+                    // Focus mode keeps only what you might still change.
+                    if !focusMode {
+                        property("Created") { Text(stamp(note.createdAt)) }
+                        property("Last modified") {
+                            Text(saving ? "Saving…" : stamp(note.updatedAt))
+                                .contentTransition(.opacity)
+                        }
+                        if let source = SOURCE_NAME[note.source] {
+                            property("Source") { Text(source) }
+                        }
+                    }
+                    property("Tags") {
+                        FlowLayout(spacing: 8, alignment: .leading) {
+                            ForEach(tags, id: \.self) { tag in tagChip(tag) }
+                            tagControl
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .animation(Motion.standard, value: focusMode)
+            }
+            .padding(.top, 22)
+            .padding(.bottom, 18)
+        }
+    }
+
+    private func property<Value: View>(_ label: String, @ViewBuilder _ value: () -> Value) -> some View {
+        GridRow {
+            Text(label)
+                .font(FN.body)
+                .foregroundStyle(p.faint)
+                .frame(width: 104, alignment: .leading)
+            value()
+                .font(FN.body)
+                .foregroundStyle(p.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: - Toolbar
+
+    private var state: RichTextState { controller.state }
+
+    /// Every formatting tool, always on show. When the editor is too narrow
+    /// for one row the groups wrap onto a second — nothing is tucked behind a
+    /// "More" menu or cut off at the edge.
+    private var toolbar: some View {
+        FlowLayout(spacing: 10, alignment: .leading) {
+            group {
+                insertMenu
+                tb("mic", "Dictate") { controller.startDictation() }
+                tb("checklist", "Checklist", active: state.isChecklist) { controller.toggleChecklist() }
+                tb("calendar", "Insert today's date") { controller.insertText(todayString) }
+            }
+            group {
+                tb("undo", "Undo (⌘Z)", enabled: state.canUndo) { controller.undo() }
+                tb("redo", "Redo (⇧⌘Z)", enabled: state.canRedo) { controller.redo() }
+            }
+            group { aiMenu }
+            group {
+                IconMenu("textSize", size: 19, help: "Text style") { textStyleEntries }
+                TextMenu(title: fontLabel, width: 92, help: "Font") { fontEntries }
+                TextMenu(title: "\(Int(state.fontSize))", width: 44, help: "Font size") { sizeEntries }
+            }
+            group {
+                tb("bold", "Bold (⌘B)", active: state.bold) { controller.toggleBold() }
+                tb("italic", "Italic (⌘I)", active: state.italic) { controller.toggleItalic() }
+                tb("underline", "Underline (⌘U)", active: state.underline) { controller.toggleUnderline() }
+                tb("strike", "Strikethrough", active: state.strikethrough) { controller.toggleStrikethrough() }
+                tb("superscript", "Superscript", active: state.superscript) { controller.toggleSuperscript() }
+                tb("subscript", "Subscript", active: state.subscript) { controller.toggleSubscript() }
+            }
+            group {
+                tb("listBullet", "Bulleted list", active: state.isBulletList) { controller.toggleBulletList() }
+                tb("listOrdered", "Numbered list", active: state.isNumberedList) { controller.toggleNumberedList() }
+                tb("indent", "Indent (Tab)", enabled: state.inList) { controller.shiftDepth(1) }
+                tb("outdent", "Outdent (⇧Tab)", enabled: state.inList) { controller.shiftDepth(-1) }
+                tb("link", "Insert link") { showLinkSheet = true }
+            }
+            group {
+                // Left is lit only once chosen, not on every ordinary paragraph.
+                tb("alignLeft", "Left-align", active: state.alignment == .left) { controller.setAlignment(.left) }
+                tb("alignCenter", "Center-align", active: state.alignment == .center) { controller.setAlignment(.center) }
+                tb("alignRight", "Right-align", active: state.alignment == .right) { controller.setAlignment(.right) }
+            }
+            group {
+                IconMenu("palette", size: 19,
+                         tone: state.color.isEmpty ? nil : NSColor(hex: state.color).map { Color(nsColor: $0) },
+                         help: "Font colour") { colorEntries }
+                IconMenu("highlight", size: 19, help: "Highlight") { highlightEntries }
+                tb("eraser", "Clear formatting") { controller.clearFormatting() }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A run of related tools that wraps as one piece.
+    private func group<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 2) { content() }.fixedSize()
+    }
+
+    private var fontEntries: [MenuEntry] {
+        FONTS.map { font in
+            .item(font.label, checked: state.fontFamily == font.value) { controller.setFontFamily(font.value) }
+        }
+    }
+
+    private var sizeEntries: [MenuEntry] {
+        SIZES.map { size in
+            .item("\(Int(size))", checked: Int(state.fontSize) == Int(size)) { controller.setFontSize(size) }
+        }
+    }
+
+    private func tb(_ icon: String, _ label: String, active: Bool = false, enabled: Bool = true,
+                    action: @escaping () -> Void) -> some View {
+        IconButton(icon, size: 19, box: 30, tone: active ? p.text : nil, help: label, action: action)
+            .background(active ? p.hover : .clear,
+                        in: RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous))
+            .disabled(!enabled)
+            .opacity(enabled ? 1 : 0.35)
+    }
+
+    private var insertMenu: some View {
+        MenuButton(help: "Insert") {
+            [
+                .item("Checklist") { controller.toggleChecklist() },
+                .item("Bulleted list") { controller.toggleBulletList() },
+                .item("Numbered list") { controller.toggleNumberedList() },
+                .item("Quote") { controller.toggleQuote() },
+                .item("Code block") { controller.toggleCode() },
+                .item("Divider") { controller.insertDivider() },
+                .divider,
+                .item("Link…") { showLinkSheet = true },
+                .item("Today's date") { controller.insertText(todayString) },
+                .item("Current time") { controller.insertText(Fmt.time(Date())) },
+            ]
+        } label: {
+            Icon("plus", size: 15)
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(p.accent, in: Circle())
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
+        }
+    }
+
+    private var aiMenu: some View {
+        MenuButton(help: "AI writing help") {
+            let scope = controller.selection == nil ? "For this note" : "For the selected text"
+            var entries: [MenuEntry] = [.header(scope)]
+            entries += WriteTask.allCases.map { task in
+                .item(task.label, enabled: aiRunning == nil) { Task { await runAI(task) } }
+            }
+            entries += [
+                .divider,
+                .item("Turn into to-dos…") {
+                    guard !controller.plainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        toasts.push("Write something first.", tone: .error)
+                        return
+                    }
+                    askAssistant("Turn the action items in my note “\(displayTitle)” into to-dos")
+                },
+                .item("Ask the assistant…") { askAssistant("About my note “\(displayTitle)”: ") },
+            ]
+            return entries
+        } label: {
+            HStack(spacing: 5) {
+                if aiRunning == nil {
+                    Icon("sparkle", size: 18).foregroundStyle(p.accent)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+                Text("AI").font(FN.bodyMedium).foregroundStyle(p.text)
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 30)
+            .contentShape(Rectangle())
+        }
+    }
+
+    private var textStyleEntries: [MenuEntry] {
+        let normal = state.headingLevel == nil && !state.isQuote && !state.isCode
+        return [
+            .item("Normal text", checked: normal) { controller.setHeading(nil) },
+            .item("Heading 1", checked: state.headingLevel == 1) { controller.setHeading(1) },
+            .item("Heading 2", checked: state.headingLevel == 2) { controller.setHeading(2) },
+            .item("Heading 3", checked: state.headingLevel == 3) { controller.setHeading(3) },
+            .item("Quote", checked: state.isQuote) { controller.toggleQuote() },
+            .item("Code", checked: state.isCode) { controller.toggleCode() },
+        ]
+    }
+
+    private var fontLabel: String {
+        FONTS.first { $0.value == state.fontFamily }?.label ?? "Custom"
+    }
+
+    private var colorEntries: [MenuEntry] {
+        let color = state.color.lowercased()
+        return TEXT_COLORS.map { c in
+            .item(c.label, checked: c.value.isEmpty ? !TEXT_COLORS.contains { !$0.value.isEmpty && $0.value == color }
+                                                    : color == c.value,
+                  swatch: c.value.isEmpty ? .labelColor : NSColor(hex: c.value)) {
+                controller.setColor(c.value)
+            }
+        }
+    }
+
+    private var highlightEntries: [MenuEntry] {
+        let highlight = state.highlight.lowercased()
+        return HIGHLIGHTS.map { c in
+            .item(c.label, checked: highlight == c.value,
+                  swatch: c.value.isEmpty ? nil : NSColor(hex: c.value)) {
+                controller.setHighlight(c.value)
+            }
+        }
+    }
+
+    // MARK: - Writing area
+
+    /// The title, the properties and the writing scroll as one: the header is
+    /// drawn inside the text's own scroll view, above the text.
+    private var writingArea: some View {
+        RichTextEditor(attributed: $attributed, controller: controller, onTextChange: save,
+                       column: TextColumn(maxWidth: focusMode ? 800 : 760, padding: focusMode ? 48 : 36,
+                                          centered: focusMode),
+                       header: editorHeader)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// What sits above the text: title, properties, and any AI work.
+    private var editorHeader: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            titleBlock
+            column {
+                VStack(alignment: .leading, spacing: 0) {
+                    if let task = aiRunning {
+                        HStack(spacing: 8) {
+                            Icon("sparkle", size: 15).foregroundStyle(p.accent)
+                            Text("\(task.label)…")
+                        }
+                        .font(FN.body)
+                        .foregroundStyle(p.muted)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(p.line, lineWidth: 1))
+                        .padding(.bottom, 12)
+                    }
+                    if let suggestion {
+                        suggestionCard(suggestion)
+                            .padding(.bottom, 12)
+                    }
+                }
+                .padding(.top, 20)
+            }
+        }
+        .background(p.bg)
+        // A separate hierarchy: it needs the app's objects handed over.
+        .environmentObject(store)
+        .environmentObject(nav)
+        .environmentObject(toasts)
+        .environmentObject(engine)
+    }
+
+    /// A model's rewrite, for review before it touches the note.
+    private func suggestionCard(_ s: AISuggestion) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Icon("sparkle", size: 15).foregroundStyle(p.accent)
+                Text(s.task.result).font(FN.bodyMedium).foregroundStyle(p.text)
+                Text(s.range == nil ? "of this note" : "of the selected text")
+                    .font(FN.small).foregroundStyle(p.faint)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+
+            Divider().overlay(p.line)
+
+            ScrollView {
+                Text(s.text)
+                    .font(FN.body)
+                    .foregroundStyle(p.text)
+                    .textSelection(.enabled)
+                    .lineSpacing(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+            }
+            .frame(maxHeight: 220)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(p.line)
+
+            HStack(spacing: 8) {
+                let addsBelow = s.task == .summarize || s.task == .continue
+                if addsBelow {
+                    PrimaryButton(title: s.task == .continue ? "Add to note" : "Insert below") { applyAI(s, replace: false) }
+                    if s.task == .summarize {
+                        GhostButton(action: { applyAI(s, replace: true) }) { Text("Replace") }
+                    }
+                } else {
+                    PrimaryButton(title: "Replace") { applyAI(s, replace: true) }
+                    GhostButton(action: { applyAI(s, replace: false) }) { Text("Insert below") }
+                }
+                GhostButton(action: {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(s.text, forType: .string)
+                    toasts.push("Copied")
+                }) { Text("Copy") }
+                Spacer()
+                GhostButton(action: { suggestion = nil }) { Text("Discard") }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .background(p.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(p.line, lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private var linkedRow: some View {
+        if !linkedTodos.isEmpty || !linkedTxs.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(spacing: 4) {
+                    Icon("link", size: 12)
+                    Text("Linked")
+                }
+                .font(FN.small)
+                .foregroundStyle(p.faint)
+
+                FlowLayout(spacing: 6, alignment: .leading) {
+                    ForEach(linkedTodos) { todo in
+                        Button { nav.open(ChangeLink(kind: .todos, id: todo.id)) } label: {
+                            Chip(tone: nil) {
+                                Icon("todo", size: 11)
+                                Text(todo.title.isEmpty ? "Untitled task" : todo.title)
+                                    .strikethrough(todo.done)
+                            }
+                        }
+                        .buttonStyle(.fn)
+                        .help("Open in To-Do")
+                    }
+                    ForEach(linkedTxs) { tx in
+                        Button { nav.open(ChangeLink(kind: .transactions, id: tx.id)) } label: {
+                            Chip(tone: nil) {
+                                Icon("finance", size: 11)
+                                Text("\(tx.merchant) · \(Money.format(tx.amount, tx.currency, compact: true))")
+                            }
+                        }
+                        .buttonStyle(.fn)
+                        .help("Open in Finance")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 10)
+            .frame(maxWidth: focusMode ? 800 : 760, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: focusMode ? .center : .leading)
+            .padding(.horizontal, focusMode ? 48 : 36)
+        }
+    }
+
+    // MARK: - Footer
+
+    private var tags: [String] { NoteText.tags(note.tags) }
+
+    private var wordCount: Int {
+        attributed.string.split { $0.isWhitespace || $0.isNewline }
+            .filter { $0 != "\u{FFFC}" }
+            .count
+    }
+
+    private var footer: some View {
+        VStack(spacing: 0) {
+            rule
+            HStack(alignment: .center, spacing: 6) {
+                IconMenu("bell", size: 17, box: 30, help: "Set a reminder") {
+                    [
+                        .header("Remind me about this note"),
+                        .item("In an hour") { setReminder(hours: 1) },
+                        .item("Tomorrow at 9:00") { setReminder(hours: 24) },
+                        .item("Next week") { setReminder(hours: 24 * 7) },
+                        .divider,
+                        .item("Pick a date and time…") {
+                            reminderAt = Self.tomorrowAtNine
+                            showReminderPicker = true
+                        },
+                    ]
+                }
+                .popover(isPresented: $showReminderPicker, arrowEdge: .top) { reminderPicker }
+
+                Spacer(minLength: 8)
+
+                HStack(spacing: 5) {
+                    if wordCount > 0 {
+                        Text("\(wordCount) word\(wordCount == 1 ? "" : "s") ·").monospacedDigit()
+                    }
+                    if saving {
+                        Text("Saving…")
+                            .transition(.opacity.combined(with: .offset(y: 3)))
+                    } else {
+                        Icon("check", size: 13)
+                        Text("All changes saved")
+                            .transition(.opacity.combined(with: .offset(y: 3)))
+                    }
+                }
+                .font(FN.small)
+                .foregroundStyle(p.faint)
+                .lineLimit(1)
+                .fixedSize()
+                .animation(Motion.standard, value: saving)
+            }
+            .padding(.leading, 30)
+            // Clear of the assistant's round button, which sits over this corner.
+            .padding(.trailing, 100)
+            .padding(.vertical, 7)
+        }
+    }
+
+    private func tagChip(_ tag: String) -> some View {
+        HStack(spacing: 4) {
+            Text(tag.capitalizedTag).lineLimit(1)
+            Button { removeTag(tag) } label: {
+                Icon("x", size: 9)
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.fn)
+            .help("Remove tag")
+            .accessibilityLabel("Remove tag \(tag)")
+        }
+        .font(FN.font(12, .medium))
+        .tracking(0.3)
+        .foregroundStyle(p.muted)
+        .padding(.leading, 10)
+        .padding(.trailing, 5)
+        .frame(height: 28)
+        .background(p.panel, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(p.line, lineWidth: 1))
+        .transition(.scale(scale: 0.9).combined(with: .opacity))
+    }
+
+    @ViewBuilder
+    private var tagControl: some View {
+        if tagDraft != nil {
+            TagField(draft: $tagDraft, addTag: addTag)
+        } else {
+            HoverRow(cornerRadius: 5) { hovering in
+                Button { tagDraft = "" } label: {
+                    HStack(spacing: 6) {
+                        Icon("plus", size: 12)
+                        Text("Add new tag")
+                    }
+                    .font(FN.font(12, .medium))
+                    .tracking(0.3)
+                    .foregroundStyle(hovering ? p.text : p.muted)
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .background(p.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .stroke(p.line, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.fn)
+                .accessibilityLabel("Add tag")
+            }
+        }
+    }
+
+    private func addTag(_ raw: String) {
+        guard let tag = NoteText.tag(raw) else { return }
+        store.updateNote(note.id) { n in
+            var cleaned = NoteText.tags(n.tags)
+            if !cleaned.contains(tag) { cleaned.append(tag) }
+            n.tags = cleaned
+        }
+    }
+
+    private func removeTag(_ tag: String) {
+        store.updateNote(note.id) { n in
+            // Also drops any spelling of it that cleans to the same tag.
+            n.tags = NoteText.tags(n.tags).filter { $0 != tag }
+        }
+    }
+
+    private var reminderPicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Remind me about this note").font(FN.bodyMedium).foregroundStyle(p.text)
+            DatePicker("", selection: $reminderAt, in: Date()..., displayedComponents: [.date, .hourAndMinute])
+                .labelsHidden()
+                .datePickerStyle(.compact)
+            HStack {
+                Spacer()
+                GhostButton(action: { showReminderPicker = false }) { Text("Cancel") }
+                PrimaryButton(title: "Set reminder") {
+                    showReminderPicker = false
+                    setReminder(at: reminderAt)
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 280)
+    }
+
+    // MARK: - Actions
+
+    private var displayTitle: String {
+        title.trimmingCharacters(in: .whitespaces).isEmpty ? "Untitled" : title
+    }
+
+    private var todayString: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US")
+        f.dateFormat = "EEEE, d MMMM yyyy"
+        return f.string(from: Date())
+    }
+
+    private var plainBody: String { NoteDocument.plainText(from: attributed) }
+
+    private func copyText() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("\(title)\n\n\(plainBody)", forType: .string)
+        toasts.push("Copied")
+    }
+
+    private func share() {
+        guard let window = NSApp.keyValueWindow else { return }
+        let picker = NSSharingServicePicker(items: ["\(title)\n\n\(plainBody)"])
+        picker.show(relativeTo: .zero, of: window.contentView ?? NSView(), preferredEdge: .minY)
+    }
+
+    private func duplicate() {
+        pendingSave?.cancel()
+        let plain = NoteDocument.plainText(from: attributed)
+        let richText = NoteDocument.hasInlineFormatting(attributed)
+            ? NoteDocument.archive(attributed) : nil
+        let copy = store.addNote {
+            $0.title = title.isEmpty ? "Untitled copy" : "\(title) copy"
+            $0.content = plain
+            $0.richText = richText
+            $0.tags = note.tags
+            $0.source = note.source
+            $0.imageDataUrl = note.imageDataUrl
+            $0.imageFile = note.imageFile
+        }
+        nav.selectedNoteId = copy.id
+        toasts.push("Note duplicated")
+    }
+
+    private func downloadText() {
+        let panel = NSSavePanel()
+        let base = title.replacingOccurrences(of: "[^\\w\\- ]+", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        panel.nameFieldStringValue = (base.isEmpty ? "note" : base) + ".txt"
+        panel.allowedContentTypes = [.plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try "\(title)\n\n\(plainBody)\n".write(to: url, atomically: true, encoding: .utf8)
+            toasts.push("Saved \(url.lastPathComponent)")
+        } catch {
+            toasts.push("Could not save: \(error.localizedDescription)", tone: .error)
+        }
+    }
+
+    private func printNote() {
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 468, height: 648))
+        let body = NSMutableAttributedString(
+            string: "\(title)\n\n",
+            attributes: [.font: NSFont.boldSystemFont(ofSize: 20)])
+        body.append(attributed)
+        textView.textStorage?.setAttributedString(body)
+        let operation = NSPrintOperation(view: textView)
+        operation.printInfo.topMargin = 72
+        operation.printInfo.bottomMargin = 72
+        operation.run()
+    }
+
+    private func deleteNote() {
+        // Pick the neighbour before removing, so the editor lands somewhere
+        // deliberate rather than on whatever sorts first afterwards.
+        let remaining = store.liveNotes.filter { $0.id != note.id }
+        nav.focusMode = false
+        store.remove(.notes, note.id)
+        nav.selectedNoteId = remaining.first?.id
+        toasts.push("Note deleted", action: Toast.Action(label: "Undo") {
+            store.updateNote(note.id) { $0.deletedAt = nil }
+        })
+    }
+
+    private static var tomorrowAtNine: Date {
+        let cal = Calendar.current
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+        return cal.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+    }
+
+    private func setReminder(hours: Int) {
+        let cal = Calendar.current
+        var at = Date().addingTimeInterval(Double(hours) * 3600)
+        if hours >= 24 { at = cal.date(bySettingHour: 9, minute: 0, second: 0, of: at) ?? at }
+        setReminder(at: at)
+    }
+
+    private func setReminder(at date: Date) {
+        let iso = DateKit.iso(date)
+        store.addTodo {
+            $0.title = title.isEmpty ? "Look at this note" : title
+            $0.noteId = note.id
+            $0.dueAt = iso
+            $0.remindAt = iso
+        }
+        toasts.push("⏰ Reminder set for \(Fmt.due(iso))")
+    }
+
+    /// Opens the assistant with the request filled in but not sent.
+    private func askAssistant(_ prefill: String) {
+        nav.assistantDraft = prefill
+    }
+
+    private func runAI(_ task: WriteTask) async {
+        guard aiRunning == nil else { return }
+        // The selection when there is one, as the menu's heading says.
+        let selected = controller.selection
+        let text = (selected?.text ?? plainBody).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            toasts.push("Write something first.", tone: .error)
+            return
+        }
+        suggestion = nil
+        aiRunning = task
+        defer { aiRunning = nil }
+        do {
+            let result = try await engine.write(task, text: text, title: displayTitle)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !result.isEmpty else {
+                toasts.push("The model came back empty. Try again.", tone: .error)
+                return
+            }
+            // The editor may have been switched to another note meanwhile.
+            guard loadedNoteId == note.id else { return }
+            suggestion = AISuggestion(task: task, text: result, range: selected?.range)
+        } catch {
+            toasts.push((error as? APIError)?.errorDescription ?? "Could not run that.", tone: .error)
+        }
+    }
+
+    private func applyAI(_ s: AISuggestion, replace: Bool) {
+        if replace {
+            controller.replace(s.range, withPlainText: s.text)
+        } else {
+            controller.insertBelow(s.range, plainText: s.text)
+        }
+        suggestion = nil
+        toasts.push(replace ? "✨ Replaced" : "✨ Added to the note")
+    }
+
+    private var linkSheet: some View {
+        SheetFrame(title: "Insert link", width: 420, maxHeight: 220) {
+            VStack(alignment: .leading, spacing: 12) {
+                BoxedField(placeholder: "https://example.com", text: $linkURL)
+                HStack {
+                    Spacer()
+                    GhostButton(action: { showLinkSheet = false }) { Text("Cancel") }
+                    PrimaryButton(title: "Insert",
+                                  disabled: linkURL.trimmingCharacters(in: .whitespaces).isEmpty) {
+                        controller.insertLink(linkURL, title: linkURL)
+                        linkURL = ""
+                        showLinkSheet = false
+                    }
+                }
+            }
+        }
+    }
+}
+
+private extension NSApplication {
+    /// The window to anchor a share sheet on.
+    var keyValueWindow: NSWindow? { keyWindow ?? windows.first }
+}
+
+/// The field for a new tag. Its own view with its own focus, so it works
+/// inside the header that scrolls with the note — a separate AppKit-hosted
+/// hierarchy, where the editor's focus state doesn't reach.
+private struct TagField: View {
+    @Environment(\.palette) private var p
+    @Binding var draft: String?
+    let addTag: (String) -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("tag name", text: Binding(
+            get: { draft ?? "" },
+            set: { value in
+                // A comma finishes a tag and starts the next, as on the web.
+                guard value.contains(",") else { draft = value; return }
+                let parts = value.split(separator: ",", omittingEmptySubsequences: false)
+                parts.dropLast().forEach { addTag(String($0)) }
+                draft = String(parts.last ?? "")
+            }))
+            .textFieldStyle(.plain)
+            .font(FN.small)
+            .foregroundStyle(p.text)
+            .focused($focused)
+            .padding(.horizontal, 8)
+            .frame(width: 130, height: 28)
+            .background(RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous)
+                .stroke(focused ? p.accent.opacity(0.55) : p.line, lineWidth: 1))
+            .onSubmit {
+                addTag(draft ?? "")
+                draft = nil
+            }
+            .onExitCommand { draft = nil }
+            .onChange(of: focused) { _, isFocused in
+                // Clicking away keeps what was typed, or closes an empty field.
+                guard !isFocused, let pending = draft else { return }
+                addTag(pending)
+                draft = nil
+            }
+            .onAppear {
+                // A field that has to be clicked again after "Add tag" was
+                // one of the glitches; it takes focus as it appears.
+                Task { @MainActor in focused = true }
+            }
+    }
+}

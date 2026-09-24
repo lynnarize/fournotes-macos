@@ -1,0 +1,31 @@
+{
+  "note": "Written by `npm run probe:models`. Only these models can be picked in Settings. Order = preference; the first is the default.",
+  "checkedAt": "2026-09-16T16:28:33.893Z",
+  "fast": "inclusionai/ling-3.0-flash-fin:free",
+  "models": [
+    {
+      "id": "inclusionai/ling-3.0-flash-fin:free",
+      "label": "Ling 3.0 Flash Fin",
+      "vision": false,
+      "verified": true
+    },
+    {
+      "id": "inclusionai/ling-3.0-flash-vl:free",
+      "label": "Ling 3.0 Flash VL",
+      "vision": true,
+      "verified": true
+    },
+    {
+      "id": "google/gemma-4-31b-it:free",
+      "label": "Gemma 4 31B",
+      "vision": true,
+      "verified": false
+    },
+    {
+      "id": "nvidia/nemotron-3-super-120b-a12b:free",
+      "label": "Nemotron 3 Super 120B",
+      "vision": false,
+      "verified": false
+    }
+  ]
+}

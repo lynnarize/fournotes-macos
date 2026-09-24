@@ -1,2 +1,160 @@
-# fournotes-macos
+# Four Notes for Mac
 
+Notes, to-dos, spending and an assistant that files things for you — in one
+calm, fast, native Mac app. Built entirely in SwiftUI and AppKit, private by
+default, and useful with no account, no key and no network.
+
+## Features
+
+- **Today** — your day on one page: a written brief, what's due (tick it off
+  right there), heads-up alerts, quick notes, and the assistant in the middle.
+  The brief reads as one paragraph or point by point.
+- **Notes** — a rich-text editor with real bullet, numbered and checklist
+  lists, spell-checking, find, undo, tags, sharing and printing. A focus mode
+  gives a note the whole window.
+- **To-Do** — a board (To Do, Doing, Done) with due dates, reminders,
+  repeating tasks and bills. Type "call Budi Friday 9am" and the date is
+  filled in.
+- **Finance** *(beta)* — spending by month and category, budgets, split bills,
+  subscription detection, upcoming payments, a monthly review and a yearly
+  report (CSV and PDF). Paste an e-wallet notification and it becomes a
+  transaction.
+- **Assistant** — ask about your notes, tasks and money, or tell it to add
+  something: "Spent 45k on lunch at Warteg", "Remind me to pay rent on the 5th
+  every month". It answers on this Mac first and offers the cloud only when a
+  question needs the internet.
+- **Scan and record** — a receipt photo becomes spending; a voice memo becomes
+  a note with its to-dos. Text is read and speech transcribed on this Mac.
+- **Edge Dock** — a small handle on the edge of the screen, over any app and
+  any Space, that opens a drawer of mini apps: quick note, today's tasks,
+  dictation with a live level meter, a one-line spend, what's coming up, and
+  the assistant. Drag cards to rearrange them. ⇧⌘. opens it.
+- **Sticky Edge** — stick notes to the dock's handle; they wait on the edge of
+  the screen and open on hover.
+- **Themes** — System, Light, Paper (warm paper, ink-brown text) and Dark.
+- **First-run setup** — a short walkthrough of the app, the look, the assistant
+  and your currency. Run it again from Settings → General.
+
+## The assistant
+
+Settings → AI & API keys has two groups, and you choose which is asked first.
+
+| | What | Setup |
+|---|---|---|
+| **On this Mac** | Apple Intelligence, or a model in LM Studio or Ollama | Found automatically — **Use**, **Start**, **Stop** |
+| **In the cloud** | Anthropic, OpenRouter (with tested free models), OpenAI, Groq, Google Gemini, or any OpenAI-compatible API | A provider, your key and a model |
+
+- **This Mac first** (the default) keeps answers on your Mac. When a question
+  needs the internet, the reply offers to ask the cloud model — nothing is sent
+  until you say so.
+- **Cloud first** asks the cloud model and falls back to this Mac if it fails;
+  the reply says which model answered and why.
+- **With nothing set up**, scanning, voice notes, reminders, budgets, search and
+  export still work. With Apple Intelligence, so do chat, the daily brief and
+  the monthly review — offline and free.
+
+Requests go straight from your Mac to the provider you choose. There is no
+Four Notes server in between.
+
+## Privacy
+
+- Everything you create is saved in one file on your Mac:
+  `~/Library/Containers/com.fournotes.mac/Data/Library/Application Support/FourNotes/four-notes-v1.json`
+  (Settings → Data & privacy → **Show data file**).
+- API keys are kept in the macOS Keychain, never in that file or a backup.
+- No accounts, analytics, tracking or ads.
+- Settings → Data & privacy exports and restores a backup, and erases
+  everything.
+
+## Requirements
+
+- macOS 26 or later
+- Xcode 27, and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+  (`brew install xcodegen`) to generate the project
+
+Apple Intelligence features need a Mac that supports it; everything else runs
+without it.
+
+## Build and run
+
+```bash
+xcodegen generate
+open FourNotes.xcodeproj
+```
+
+Or from the command line:
+
+```bash
+xcodebuild -project FourNotes.xcodeproj -scheme FourNotes -configuration Release build
+```
+
+`project.yml` is the source of truth for the Xcode project; run
+`xcodegen generate` after adding or removing files.
+
+## Make an installer
+
+```bash
+./scripts/make-dmg.sh
+```
+
+Builds Release and writes `build/FourNotes-<version>.dmg` — the app, an
+Applications shortcut and a drag-to-install background. The first run asks to
+let Terminal control Finder, which lays out the window.
+
+The build is ad-hoc signed. On another Mac, open it the first time with
+right-click → **Open** (or System Settings → Privacy & Security → **Open
+Anyway**). A Developer ID signature and notarization remove that step.
+
+## Tests
+
+```bash
+./run-tests.sh
+```
+
+The suite (Swift Testing) covers money parsing and formatting, dates and
+recurrence, budgets and splits, subscription detection, saving and loading,
+search, the note editor's document format, the edge dock's layout, and how
+model output is checked before anything is saved. It needs no key, network or
+model server.
+
+Optional evaluations run real requests against a model, and are off unless
+switched on:
+
+```bash
+TEST_RUNNER_FOURNOTES_EVAL_AFM=1 ./run-tests.sh                 # Apple Intelligence
+TEST_RUNNER_FOURNOTES_EVAL_OPENROUTER=<model> ./run-tests.sh    # OpenRouter, key from the Keychain
+TEST_RUNNER_FOURNOTES_EVAL_LOCAL=<model> ./run-tests.sh         # a model server on localhost:1234
+TEST_RUNNER_FOURNOTES_EVAL_LOCALSERVER=1 ./run-tests.sh         # LM Studio / Ollama detection
+```
+
+`smoke-test.swift` drives the running app through the accessibility API
+(`swift smoke-test.swift`, with the app open and the screen unlocked).
+
+## Keyboard shortcuts
+
+| | |
+|---|---|
+| ⌘N / ⇧⌘N / ⌥⌘N | New note / task / transaction |
+| ⌘K | Search or quick add |
+| ⌘1 – ⌘4 | Today, Notes, To-Do, Finance |
+| ⇧⌘I | Scan a receipt or note |
+| ⇧⌘R | Record a voice note |
+| ⇧⌘. | Open the edge dock |
+| ⌘, | Settings |
+
+## Project layout
+
+```
+FourNotes/
+  App/        app entry, menus, shared app objects
+  AI/         the assistant: providers, on-device model, prompts, tools
+  Dock/       the edge dock, its mini apps and Sticky Edge
+  Design/     theme, icons, shared components, motion
+  Models/     notes, tasks, money, dates, recurrence, insights
+  Services/   assistant, background jobs, dictation, local model servers, search
+  Store/      the document, saving and loading, attachments
+  Views/      Today, Notes, To-Do, Finance, Settings, setup
+FourNotesTests/
+scripts/      installer (make-dmg.sh)
+project.yml   XcodeGen project definition
+```
