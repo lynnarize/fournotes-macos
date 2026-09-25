@@ -17,6 +17,7 @@ final class AppModel {
     let engine: AIEngine
     let assistant: Assistant
     let jobs: BackgroundJobs
+    let sync: GoogleSync
 
     private init() {
         store = Store()
@@ -25,6 +26,7 @@ final class AppModel {
         engine = AIEngine()
         assistant = Assistant(store: store, nav: nav, toasts: toasts, engine: engine)
         jobs = BackgroundJobs(store: store, toasts: toasts, engine: engine)
+        sync = GoogleSync(store: store, toasts: toasts)
     }
 
     /// True inside the unit tests' host app, which should not put anything

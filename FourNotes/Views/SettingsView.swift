@@ -8,11 +8,11 @@ private let KOFI_URL = "https://ko-fi.com/lynnarize"
 
 private let PRIVACY_POINTS: [(icon: String, title: String, text: String)] = [
     ("shield", "Saved on this Mac",
-     "Everything you add is stored in a file on this Mac. There's no account and no Four Notes server."),
+     "Everything you add is stored in a file on this Mac. There's no Four Notes account or server. If you turn on Sync, a copy is kept in a private app folder in your own Google Drive."),
     ("sparkle", "Shared with AI only when you ask",
      "Apple Intelligence and models in LM Studio or Ollama answer on this Mac. A cloud model you add gets only what a request needs, straight from this Mac. The results are saved here."),
     ("cloud", "Little else goes online",
-     "Exchange rates are looked up by currency code, and Check for updates asks GitHub. That's all."),
+     "Exchange rates are looked up by currency code, Check for updates asks GitHub, and Sync, when you turn it on, talks only to Google Drive. That's all."),
     ("key", "Your API keys stay private",
      "Keys are kept in this Mac's Keychain only. They are never included in backups."),
 ]
@@ -21,6 +21,7 @@ struct SettingsView: View {
     @ObservedObject private var dock = EdgeDock.shared
     @ObservedObject private var stickies = EdgeStickies.shared
     @ObservedObject private var updates = UpdateCheck.shared
+    @ObservedObject private var sync = AppModel.shared.sync
     @Environment(\.palette) private var p
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: Store
@@ -40,6 +41,8 @@ struct SettingsView: View {
     @State private var keysGeneration = 0
     /// The Privacy Policy or Terms, open over Settings.
     @State private var legalDocument: LegalDocument?
+    @State private var confirmDisconnect = false
+    @State private var deleteDriveCopy = false
 
     private var settings: AppSettings { store.settings }
 
@@ -60,6 +63,11 @@ struct SettingsView: View {
                 section("general", icon: "settings", title: "General",
                         summary: settings.currency + (settings.name.map { " · \($0)" } ?? "")) {
                     general
+                }
+                if sync.isAvailable {
+                    section("sync", icon: "cloud", title: "Sync", summary: syncSummary) {
+                        syncSection
+                    }
                 }
                 section("budgets", icon: "target", title: "Monthly budgets",
                         summary: budgetSummary) {
@@ -384,6 +392,92 @@ struct SettingsView: View {
             }
         case .failed(let message):
             Text(message).font(FN.small).foregroundStyle(p.danger)
+        }
+    }
+
+    // MARK: - Sync
+
+    private var syncSummary: String {
+        guard sync.account != nil else { return "Off" }
+        switch sync.status {
+        case .syncing: return "Syncing…"
+        case .offline: return "Offline"
+        case .error: return "Needs attention"
+        case .idle, .synced: return sync.account?.email ?? "Google Drive"
+        }
+    }
+
+    private var syncSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Keep this Mac and the web app in step through your own Google Drive. Four Notes keeps one file in a private app folder there: you won't see it among your files, and no one else can read it. Scans, sample data and API keys stay on this Mac.")
+                .font(FN.small).foregroundStyle(p.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let account = sync.account {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(account.email.map { "Connected as \($0)" } ?? "Connected to Google")
+                        .font(FN.bodyMedium).foregroundStyle(p.text)
+                    syncStatus
+                }
+                if confirmDisconnect {
+                    boxed {
+                        Text("Disconnect this Mac?").font(FN.bodyMedium).foregroundStyle(p.text)
+                        Text("Your data stays on this Mac either way.")
+                            .font(FN.small).foregroundStyle(p.muted)
+                        Toggle("Also delete the copy in Google Drive", isOn: $deleteDriveCopy)
+                            .toggleStyle(.checkbox)
+                            .font(FN.body)
+                        HStack(spacing: 8) {
+                            PrimaryButton(title: "Disconnect", tone: deleteDriveCopy ? p.danger : nil) {
+                                let deleteCopy = deleteDriveCopy
+                                confirmDisconnect = false
+                                deleteDriveCopy = false
+                                Task { await sync.disconnect(deleteCopy: deleteCopy) }
+                            }
+                            GhostButton(action: { confirmDisconnect = false; deleteDriveCopy = false }) {
+                                Text("Cancel")
+                            }
+                        }
+                    }
+                    .transition(.opacity.combined(with: .offset(y: -8)))
+                } else {
+                    HStack(spacing: 8) {
+                        SecondaryButton(title: sync.status == .syncing ? "Syncing…" : "Sync now") { sync.syncNow() }
+                            .disabled(sync.status == .syncing)
+                        GhostButton(action: { confirmDisconnect = true }) { Text("Disconnect") }
+                    }
+                }
+            } else {
+                if let message = sync.message {
+                    Text(message).font(FN.small).foregroundStyle(p.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                PrimaryButton(title: sync.connecting ? "Waiting for Google…" : "Connect Google",
+                              disabled: sync.connecting) {
+                    Task { await sync.connect() }
+                }
+            }
+        }
+        .animation(Motion.standard, value: confirmDisconnect)
+    }
+
+    @ViewBuilder
+    private var syncStatus: some View {
+        switch sync.status {
+        case .syncing:
+            Text("Syncing…").font(FN.small).foregroundStyle(p.muted)
+        case .offline:
+            Text("Offline. Sync will resume when this Mac is back online.").font(FN.small).foregroundStyle(p.muted)
+        case .error:
+            Text(sync.message ?? "Sync failed.").font(FN.small).foregroundStyle(p.danger)
+                .fixedSize(horizontal: false, vertical: true)
+        case .idle, .synced:
+            if let last = sync.lastSynced {
+                Text("Last synced \(last.formatted(.relative(presentation: .named)))")
+                    .font(FN.small).foregroundStyle(p.muted)
+            } else {
+                Text("Not synced yet.").font(FN.small).foregroundStyle(p.muted)
+            }
         }
     }
 

@@ -29,6 +29,8 @@
 			</array>
 		</dict>
 	</array>
+	<key>FNGoogleClientID</key>
+	<string>$(GOOGLE_CLIENT_ID)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSMinimumSystemVersion</key>

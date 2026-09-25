@@ -62,9 +62,15 @@ Four Notes server in between.
   `~/Library/Containers/com.fournotes.mac/Data/Library/Application Support/FourNotes/four-notes-v1.json`
   (Settings → Data & privacy → **Show data file**).
 - API keys are kept in the macOS Keychain, never in that file or a backup.
-- No accounts, analytics, tracking or ads. Besides a cloud AI model you add
-  yourself, the app only goes online to look up exchange rates (currency codes
-  only) and, when you ask, to check GitHub for a newer release.
+- No Four Notes account, analytics, tracking or ads. Besides a cloud AI model
+  you add yourself, the app only goes online to look up exchange rates
+  (currency codes only), when you ask, to check GitHub for a newer release,
+  and, if you turn it on, to sync with Google Drive.
+- **Sync** (optional, Settings → Sync): sign in with Google and your notes,
+  to-dos, spending and sticky notes are kept in step with the web app at
+  [app.fournotes.xyz](https://app.fournotes.xyz), through one file in a
+  private app folder in your own Google Drive. Scans, sample data and API keys
+  stay on the Mac.
 - Settings → Data & privacy exports and restores a backup, and erases
   everything.
 
@@ -92,6 +98,24 @@ xcodebuild -project FourNotes.xcodeproj -scheme FourNotes -configuration Release
 
 `project.yml` is the source of truth for the Xcode project; run
 `xcodegen generate` after adding or removing files.
+
+## Google Drive sync setup
+
+Sync stays hidden until the build has a Google client ID.
+
+1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials),
+   open **the same project as the web app's OAuth client**. Drive's private app
+   folder belongs to the project, so a client in another project would see an
+   empty folder and never meet the web app's data.
+2. **Create credentials → OAuth client ID → iOS**, with bundle ID
+   `com.fournotes.mac`. The iOS type has no client secret and redirects to
+   `com.googleusercontent.apps.<id>:/oauth2redirect`, which the app handles
+   itself; there is no redirect URI to register.
+3. Put the client ID in `project.yml` → `GOOGLE_CLIENT_ID`, then
+   `xcodegen generate`.
+
+The client ID is not a secret: an installed app's ID ships inside it anyway,
+so it is fine to commit. The user's sign-in is kept in their Keychain.
 
 ## Make an installer
 

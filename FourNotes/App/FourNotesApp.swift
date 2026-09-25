@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let model = AppModel.shared
         model.jobs.start()
+        model.sync.start()
         if !AppModel.isTesting {
             EdgeDock.shared.install(model)
             EdgeStickies.shared.install(model)

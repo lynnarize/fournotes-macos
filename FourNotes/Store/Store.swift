@@ -368,19 +368,52 @@ final class Store: ObservableObject {
     // MARK: - Sync merge
 
     /// Merge rows pulled from the cloud; newer updatedAt wins. Does not bump timestamps.
-    func mergeRemote<T: BaseItem>(_ keyPath: WritableKeyPath<AppData, [T]>, _ rows: [T], reversed: Bool = false) {
+    /// `keeping` combines a local row with the newer incoming one, for fields
+    /// that never leave this Mac.
+    func mergeRemote<T: BaseItem>(_ keyPath: WritableKeyPath<AppData, [T]>, _ rows: [T], reversed: Bool = false,
+                                  keeping: ((_ local: T, _ incoming: T) -> T)? = nil) {
         guard !rows.isEmpty else { return }
         var byId = Dictionary(all[keyPath: keyPath].map { ($0.id, $0) },
                               uniquingKeysWith: { first, _ in first })
         var changed = false
         for r in rows {
-            if let local = byId[r.id], r.updatedAt <= local.updatedAt { continue }
-            byId[r.id] = r
+            if let local = byId[r.id] {
+                if r.updatedAt <= local.updatedAt { continue }
+                byId[r.id] = keeping?(local, r) ?? r
+            } else {
+                byId[r.id] = r
+            }
             changed = true
         }
         guard changed else { return }
         let list = byId.values.sorted { $0.createdAt > $1.createdAt }
         all[keyPath: keyPath] = reversed ? list.reversed() : list
+    }
+
+    /// Merge what Google Drive had. Scans are not synced, so a newer row from
+    /// another device keeps this Mac's image.
+    func applySync(_ remote: AppData) {
+        mergeRemote(\.notes, remote.notes) { local, incoming in
+            var note = incoming
+            if note.imageFile == nil && note.imageDataUrl == nil {
+                note.imageFile = local.imageFile
+                note.imageDataUrl = local.imageDataUrl
+            }
+            return note
+        }
+        mergeRemote(\.todos, remote.todos)
+        mergeRemote(\.transactions, remote.transactions) { local, incoming in
+            var transaction = incoming
+            if transaction.imageFile == nil && transaction.imageDataUrl == nil {
+                transaction.imageFile = local.imageFile
+                transaction.imageDataUrl = local.imageDataUrl
+            }
+            return transaction
+        }
+        mergeRemote(\.stickies, remote.stickies, reversed: true)
+        // Settings without a timestamp have never been changed on the other
+        // device; applying them would reset this Mac's currency to the default.
+        if remote.settings.updatedAt != nil { mergeSettings(remote.settings) }
     }
 
     // MARK: - Sample data

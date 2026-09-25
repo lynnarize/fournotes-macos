@@ -2,9 +2,10 @@ import AppKit
 import SwiftUI
 
 // The Privacy Policy and Terms of Service for the Mac app. Written for this
-// app, not copied from the web app's pages: no Google sign-in, no Drive sync,
-// no Four Notes server. Checked against the code — Store/Persistence,
-// Store/Attachments, Services/Keychain, AI/AIEngine, AI/AIProvider,
+// app, not copied from the web app's pages: Google sign-in is optional and only
+// for Drive sync, and there is no Four Notes server. Checked against the code —
+// Store/Persistence, Store/Attachments, Services/Keychain, Services/GoogleAuth,
+// Services/DriveSync, AI/AIEngine, AI/AIProvider,
 // Services/QuickTranscriber, Services/Assistant, Services/UpdateCheck. When
 // what leaves the Mac changes, change this too, and bump `lastUpdated`.
 
@@ -32,7 +33,7 @@ enum LegalDocument: String, Identifiable, CaseIterable {
 
     private static let privacyBlocks: [Block] = [
         .p("This policy covers Four Notes for Mac (“the app”, “we”): a notes, to-do and spending app with an optional AI assistant. It explains what the app keeps, what can leave your Mac and when, and how to remove it. We don’t sell your information, show ads, or use analytics, tracking or crash-reporting tools."),
-        .callout("**In short:** everything you create stays in a file on this Mac. There is no Four Notes account and no Four Notes server. Something leaves your Mac only when you use a cloud AI model you set up yourself, look up an exchange rate, or check for updates."),
+        .callout("**In short:** everything you create stays in a file on this Mac. There is no Four Notes account and no Four Notes server. Something leaves your Mac only when you turn on sync with your own Google Drive, use a cloud AI model you set up yourself, look up an exchange rate, or check for updates."),
 
         .h2("1. What stays on your Mac"),
         .list([
@@ -41,7 +42,7 @@ enum LegalDocument: String, Identifiable, CaseIterable {
             "**API keys** and provider settings are kept in the macOS Keychain. They are never written to the data file or to a backup.",
             "**Small preferences** such as the theme and Edge Dock layout are kept in the app’s standard macOS preferences.",
         ]),
-        .p("We have no copy of any of this and can’t see it. The app has no sign-in, and nothing is synced to a cloud by Four Notes. If you back up your Mac (for example with Time Machine or iCloud), the data file is included like any other file, under that service’s terms."),
+        .p("We have no copy of any of this and can’t see it. Nothing is synced unless you turn on sync with Google Drive (section 4). If you back up your Mac (for example with Time Machine or iCloud), the data file is included like any other file, under that service’s terms."),
 
         .h2("2. Things done on this Mac"),
         .list([
@@ -66,6 +67,7 @@ enum LegalDocument: String, Identifiable, CaseIterable {
 
         .h2("4. Other connections"),
         .list([
+            "**Sync with Google Drive** (only if you connect it in Settings → Sync) — you sign in with Google on Google’s own page, and the app asks only to see your email address and name and to use its own private folder in your Drive. Your notes, to-dos, transactions, sticky notes and main settings are kept there as one file, which you can’t see among your files and no one else can read; the Four Notes web app reads the same file when you sign in there. Scanned images, sample data, API keys and Mac-only preferences are not synced. The sign-in is kept in the macOS Keychain. *Disconnect* in Settings → Sync signs this Mac out and can delete the copy in Drive. See [Google’s privacy policy](https://policies.google.com/privacy).",
             "**Exchange rates** — for a transaction in another currency, the app asks [Frankfurter](https://www.frankfurter.app), a public rates service, for the rate. Only the two currency codes are sent.",
             "**Checking for updates** — when you choose *Check for updates* in Settings, the app asks GitHub for the latest Four Notes release. Nothing about you or your data is sent. See [GitHub’s privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).",
             "**Links you open** — *Search the web* and *Add to Google Calendar* open your browser with the note or task title filled in. Nothing is sent until you open the link.",
@@ -80,6 +82,7 @@ enum LegalDocument: String, Identifiable, CaseIterable {
             "**Export** everything to a file, or **import** a backup, in Settings → Data & privacy. Backups include images but not API keys.",
             "**Delete all local data** in Settings → Data & privacy erases your content, settings and saved API keys from this Mac. It can’t be undone.",
             "**Remove a provider key** in Settings → AI & API keys at any time.",
+            "**Stop syncing** in Settings → Sync → *Disconnect*, and optionally delete the copy in Google Drive. You can also remove Four Notes’ access at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).",
             "**Uninstalling** the app doesn’t remove its data folder; delete everything first if you want it gone.",
         ]),
 
