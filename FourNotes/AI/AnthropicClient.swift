@@ -38,7 +38,7 @@ struct AnthropicClient {
             var body: [String: Any] = [
                 "model": model,
                 "max_tokens": 1024,
-                "system": cachedSystem(ctx),
+                "system": cachedSystem(ctx, chat: true),
                 "messages": messages,
             ]
             if tools { body["tools"] = AITools.cachedActionTools }
@@ -206,12 +206,14 @@ struct AnthropicClient {
 
     /// Prompt caching: the static instructions and tool definitions are identical
     /// on every request, so they carry a cache breakpoint. Per-user data goes after it.
-    private func cachedSystem(_ ctx: ClientContext) -> [[String: Any]] {
+    /// `chat` adds the scope rules (see Guard) after the breakpoint, so caching still works.
+    private func cachedSystem(_ ctx: ClientContext, chat: Bool = false) -> [[String: Any]] {
         [
             ["type": "text", "text": Prompts.staticInstructions,
              "cache_control": ["type": "ephemeral"]],
             ["type": "text", "text": Prompts.dynamicContext(ctx) + "\n\n"
-                + Prompts.identity(model: model, provider: "your own Anthropic API key")],
+                + Prompts.identity(model: model, provider: "your own Anthropic API key")
+                + (chat ? "\n\n" + Guard.scopeInstructions : "")],
         ]
     }
 

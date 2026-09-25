@@ -16,8 +16,9 @@ private let routerModel = ProcessInfo.processInfo.environment["FOURNOTES_EVAL_OP
 @Suite("OpenRouter evaluation", .serialized, .enabled(if: routerModel != nil))
 struct OpenRouterEvalTests {
     private func client() throws -> OpenAICompatibleClient {
-        let saved: String? = Keychain.read(.providerKey)
-        let key: String? = (saved?.isEmpty == false) ? saved : Keychain.read(.openrouterKey)
+        // The OpenRouter tab's key; before the tabs it was the cloud slot's.
+        let saved: String? = Keychain.read(.openrouterKey)
+        let key: String? = (saved?.isEmpty == false) ? saved : Keychain.read(.providerKey)
         guard let key, !key.isEmpty else { throw APIError.server("No OpenRouter key in the Keychain.") }
         let model = routerModel ?? OpenRouterModels.defaultModel
         return OpenAICompatibleClient(provider: AIProvider.find("openrouter")!,

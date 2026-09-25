@@ -62,6 +62,73 @@ enum OpenRouterModels {
         supportsVision(id) ? id : defaultVisionModel
     }
 
+    // MARK: - Paid
+
+    static let keysPage = "https://openrouter.ai/keys"
+    static let creditsPage = "https://openrouter.ai/settings/credits"
+
+    /// A paid model offered in Settings, from OpenRouter's live list.
+    struct PaidModel: Identifiable, Equatable, Sendable {
+        var id: String
+        var name: String
+        var vision: Bool
+        var context: Int
+        /// USD per token.
+        var prompt: Double
+        var completion: Double
+
+        /// "Claude Sonnet 5 · $3 in / $15 out · reads photos"
+        var menuLabel: String {
+            "\(name) · \(perMillion(prompt)) in / \(perMillion(completion)) out\(vision ? " · reads photos" : "")"
+        }
+    }
+
+    /// An OpenRouter slug like "anthropic/claude-sonnet-5". Paid models are typed freely, so check the shape.
+    static func isModelId(_ id: String?) -> Bool {
+        guard let id, id.count <= 120 else { return false }
+        return id.range(of: #"^~?[a-z0-9][\w.-]*/[a-z0-9][\w.:-]*$"#,
+                        options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// USD per 1M tokens, for display.
+    static func perMillion(_ usdPerToken: Double) -> String {
+        let v = usdPerToken * 1e6
+        if v < 1 {
+            var s = String(format: "%.2f", v)
+            if s.hasSuffix("0") { s.removeLast() }
+            return "$" + s
+        }
+        return v.truncatingRemainder(dividingBy: 1) == 0 ? String(format: "$%.0f", v) : String(format: "$%.2f", v)
+    }
+
+    /// OpenRouter's paid models that can call tools (the app files to-dos and
+    /// transactions through tool calls). A public list: no key needed.
+    /// Ported from the web app's /api/ai/openrouter-models.
+    static func paid() async throws -> [PaidModel] {
+        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/models")!)
+        request.timeoutInterval = 15
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError.badResponse
+        }
+        let price = { (v: Any?) in Double(v as? String ?? "") ?? (v as? Double) ?? 0 }
+        return (json["data"] as? [[String: Any]] ?? []).compactMap { m -> PaidModel? in
+            guard let id = m["id"] as? String,
+                  (m["supported_parameters"] as? [String])?.contains("tools") == true,
+                  // ":free" is the free tier, ":batch" isn't for live replies.
+                  id.range(of: #":(free|batch)$"#, options: .regularExpression) == nil else { return nil }
+            let pricing = m["pricing"] as? [String: Any]
+            let prompt = price(pricing?["prompt"]), completion = price(pricing?["completion"])
+            // Negative prices mark routers with variable pricing.
+            guard prompt >= 0, completion >= 0, prompt + completion > 0 else { return nil }
+            let modalities = (m["architecture"] as? [String: Any])?["input_modalities"] as? [String] ?? []
+            return PaidModel(id: id, name: m["name"] as? String ?? id, vision: modalities.contains("image"),
+                             context: m["context_length"] as? Int ?? 0, prompt: prompt, completion: completion)
+        }
+        .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+    }
+
     /// Models to try, in order, for one request (OpenRouter's `models`
     /// fallback): the chosen one, another tested one, then the router. A paid,
     /// user-chosen model is never swapped behind their back. Kept to three:

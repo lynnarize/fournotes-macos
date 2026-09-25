@@ -2,9 +2,10 @@ import AppKit
 import SwiftUI
 
 // One provider slot in Settings → AI & API keys: the model server on this
-// Mac (LM Studio, Ollama), or the cloud provider (OpenRouter, OpenAI, Groq,
-// Gemini, any OpenAI-compatible API). The key goes in the Keychain; choice,
-// address and model are ordinary settings. The engine re-reads them on save.
+// Mac (LM Studio, Ollama), or the cloud's Other tab (OpenAI, Groq, Gemini, any
+// OpenAI-compatible API; OpenRouter and OpenCode have tabs of their own, see
+// CloudSettings). The key goes in the Keychain; choice, address and model are
+// ordinary settings. The engine re-reads them on save.
 
 struct ProviderSlotEditor: View {
     @Environment(\.palette) private var p
@@ -12,6 +13,8 @@ struct ProviderSlotEditor: View {
     @ObservedObject private var servers = LocalServers.shared
 
     let slot: AIProvider.Slot
+    /// Told when the provider or its key changes.
+    var onChange: () -> Void = {}
 
     @State private var providerId = ""
     @State private var base = ""
@@ -20,7 +23,9 @@ struct ProviderSlotEditor: View {
     @State private var models: [String] = []
 
     private var chosen: AIProvider? { AIProvider.find(providerId) }
-    private var title: String { slot == .local ? "Model server" : "Cloud provider" }
+    private var title: String { slot == .local ? "Model server" : "Provider" }
+    /// The cloud's Other tab leaves out the providers with tabs of their own.
+    private var choices: [AIProvider] { AIProvider.all(in: slot).filter { !$0.hasOwnTab } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -30,7 +35,7 @@ struct ProviderSlotEditor: View {
             labelled(slot == .local ? "Or choose by hand" : title) {
                 TextMenu(title: chosen?.name ?? "None", help: "Choose a \(title.lowercased())") {
                     [.item("None", checked: chosen == nil) { choose(nil) }, .divider]
-                        + AIProvider.all(in: slot).map { provider in
+                        + choices.map { provider in
                             .item(provider.name, checked: provider.id == providerId) { choose(provider) }
                         }
                 }
@@ -42,12 +47,15 @@ struct ProviderSlotEditor: View {
                                text: $base) { save() }
                 }
                 if let keyItem = slot.keyItem {
-                    KeyField(item: keyItem) { engine.refresh() }
+                    KeyField(item: keyItem) {
+                        engine.refresh()
+                        onChange()
+                    }
                 }
                 labelled("Model") {
                     HStack(spacing: 8) {
                         BoxedField(placeholder: chosen.modelHint, text: $model) { save() }
-                        if !models.isEmpty || chosen.id == "openrouter" {
+                        if !models.isEmpty {
                             TextMenu(title: "Choose", help: "Models \(chosen.name) offers") { modelEntries }
                         }
                     }
@@ -163,28 +171,13 @@ struct ProviderSlotEditor: View {
         }
     }
 
-    /// OpenRouter's tested free models first, then the fetched list, narrowed
-    /// by what is typed in the model field.
+    /// The fetched list, narrowed by what is typed in the model field.
     private var modelEntries: [MenuEntry] {
-        var entries: [MenuEntry] = []
-        if providerId == "openrouter", !OpenRouterModels.free.isEmpty {
-            entries.append(.header("Tested free models"))
-            entries += OpenRouterModels.free.map { free in
-                .item(free.menuLabel, checked: free.id == model) {
-                    model = free.id
-                    save()
-                }
-            }
-            if !models.isEmpty {
-                entries.append(.divider)
-                entries.append(.header("All models"))
-            }
-        }
         let typed = model.trimmingCharacters(in: .whitespaces)
         let matching = typed.isEmpty || models.contains(typed)
             ? models
             : models.filter { $0.localizedCaseInsensitiveContains(typed) }
-        return entries + matching.prefix(60).map { id in
+        return matching.prefix(60).map { id in
             .item(id, checked: id == model) {
                 model = id
                 save()
@@ -194,6 +187,7 @@ struct ProviderSlotEditor: View {
 
     private func load() {
         providerId = Keychain.read(slot.idItem) ?? ""
+        if chosen?.hasOwnTab == true { providerId = "" }
         base = Keychain.read(slot.baseURLItem).flatMap { $0.isEmpty ? nil : $0 } ?? chosen?.baseURL ?? ""
         model = Keychain.read(slot.modelItem) ?? ""
     }
@@ -203,18 +197,14 @@ struct ProviderSlotEditor: View {
         providerId = provider?.id ?? ""
         base = provider?.baseURL ?? ""
         if changed {
-            // OpenRouter starts on the tested free default.
-            model = provider?.id == "openrouter" ? OpenRouterModels.defaultModel : ""
+            model = ""
             models = []
-            if let keyItem = slot.keyItem {
-                // A key belongs to one provider — except the OpenRouter key saved
-                // for the old Four Notes server, which is picked up again here.
-                let saved = provider?.id == "openrouter" ? Keychain.read(.openrouterKey) : nil
-                Keychain.write(keyItem, saved.flatMap { Keychain.isValid($0) ? $0 : nil })
-            }
+            // A key belongs to one provider.
+            if let keyItem = slot.keyItem { Keychain.write(keyItem, nil) }
         }
         status = nil
         save(quietly: true)
+        if changed { onChange() }
     }
 
     private func save(quietly: Bool = false) {
@@ -231,6 +221,8 @@ struct ProviderSlotEditor: View {
             status = engine.priority == .localFirst
                 ? "Saved · \(chosen.shortName) answers first, on this Mac."
                 : "Saved · \(chosen.shortName) answers when the cloud can't."
+        } else if let first = engine.cloudTabs.first, first != .other {
+            status = "Saved · \(first.label) is asked first; \(chosen.shortName) steps in when it can't answer."
         } else {
             status = engine.priority == .localFirst
                 ? "Saved · used when you tap “Ask \(engine.cloudOffer ?? chosen.shortName)”, or when this Mac has no model."
@@ -245,7 +237,6 @@ struct ProviderSlotEditor: View {
             return "Add your \(chosen.name) key to use it."
         }
         if model.trimmingCharacters(in: .whitespaces).isEmpty { return "Choose a model to use it." }
-        if slot == .cloud, Keychain.read(.anthropicKey)?.isEmpty == false { return "Your Anthropic key is asked first." }
         return nil
     }
 

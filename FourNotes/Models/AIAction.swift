@@ -122,6 +122,9 @@ struct ChatResponse: Decodable {
     var answererName: String?
     /// Set when the first choice failed and another model answered.
     var fallbackNote: String?
+    /// The assistant declined (code, or anything harmful; see Guard): no other
+    /// model should be offered the question.
+    var refused = false
 
     init(reply: String, actions: [AIAction], demo: Bool? = nil, droppedActions: Int = 0) {
         self.reply = reply; self.actions = actions; self.demo = demo

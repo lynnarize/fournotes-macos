@@ -6,8 +6,9 @@ import SwiftUI
 //
 //   on this Mac — a local model server (LM Studio, Ollama) if one is set up,
 //                 then Apple Intelligence
-//   in the cloud — the user's Anthropic key, then a cloud provider
-//                  (OpenRouter, OpenAI, Groq, Gemini…)
+//   in the cloud — the user's own keys, one tab each in Settings: OpenRouter,
+//                  OpenCode, Claude, Other (OpenAI, Groq, Gemini…). The one
+//                  picked there first, then the rest (see CloudProviders)
 //
 // Local first (the default): requests stay on this Mac while any local model
 // exists, and the cloud is used only when there is none — or when the user
@@ -76,6 +77,7 @@ final class AIEngine: ObservableObject {
                         .replacingOccurrences(of: "Claude ", with: "") } ?? "Claude"
             case .provider(let client):
                 let model = OpenRouterModels.free.first { $0.id == client.model }?.label
+                    ?? (OpenCodeModels.free + OpenCodeModels.go).first { $0.id == client.model }?.label
                     ?? client.model.split(separator: "/").last.map(String.init)?
                         .replacingOccurrences(of: ":free", with: "") ?? client.model
                 return "\(client.provider.shortName) · \(model)"
@@ -121,6 +123,7 @@ final class AIEngine: ObservableObject {
     init() {
         // The Four Notes server address, from before providers were direct.
         UserDefaults.standard.removeObject(forKey: "fournotes.baseURL")
+        CloudProviders.migrate()
         refresh()
     }
 
@@ -137,7 +140,7 @@ final class AIEngine: ObservableObject {
     /// Read once per `refresh()` rather than per access: these are read from
     /// view bodies, and each is several Keychain round-trips.
     private var cachedAnthropic: AnthropicClient??
-    private var cachedCloud: OpenAICompatibleClient??
+    private var cachedCloud: [(tab: CloudProviders.Tab, answerer: Answerer)]?
     private var cachedLocal: OpenAICompatibleClient??
 
     private var anthropic: AnthropicClient? {
@@ -157,13 +160,23 @@ final class AIEngine: ObservableObject {
                 ?? AnthropicClient.defaultFastModel)
     }
 
-    /// The cloud provider — OpenRouter, OpenAI… — when one is chosen and complete.
-    private var cloudProvider: OpenAICompatibleClient? {
+    /// Every cloud model with a key, in the order they are asked.
+    private var cloud: [(tab: CloudProviders.Tab, answerer: Answerer)] {
         if let cachedCloud { return cachedCloud }
-        let resolved = Self.resolveProvider(.cloud)
-        cachedCloud = .some(resolved)
+        var ready: [CloudProviders.Tab: Answerer] = [:]
+        ready[.anthropic] = anthropic.map(Answerer.anthropic)
+        ready[.openrouter] = CloudProviders.openRouter().map(Answerer.provider)
+        ready[.opencode] = CloudProviders.openCode().map(Answerer.provider)
+        ready[.other] = Self.resolveProvider(.cloud).map(Answerer.provider)
+        let resolved = CloudProviders.ordered(Array(ready.keys)).compactMap { tab in ready[tab].map { (tab, $0) } }
+        cachedCloud = resolved
         return resolved
     }
+
+    private var cloudAnswerers: [Answerer] { cloud.map(\.answerer) }
+
+    /// The Settings tabs whose model is ready, in the order they are asked.
+    var cloudTabs: [CloudProviders.Tab] { cloud.map(\.tab) }
 
     /// The local model server — LM Studio, Ollama — when one is chosen.
     private var localProvider: OpenAICompatibleClient? {
@@ -174,15 +187,14 @@ final class AIEngine: ObservableObject {
     }
 
     static func resolveProvider(_ slot: AIProvider.Slot) -> OpenAICompatibleClient? {
-        guard let chosen = AIProvider.find(Keychain.read(slot.idItem)), chosen.slot == slot else { return nil }
+        // OpenRouter and OpenCode have tabs of their own, with their own keys.
+        guard let chosen = AIProvider.find(Keychain.read(slot.idItem)), chosen.slot == slot,
+              !chosen.hasOwnTab else { return nil }
         let base = Keychain.read(slot.baseURLItem).flatMap { $0.isEmpty ? nil : $0 } ?? chosen.baseURL
         let key = slot.keyItem.flatMap(Keychain.read).flatMap { Keychain.isValid($0) && !$0.isEmpty ? $0 : nil }
         let model = Keychain.read(slot.modelItem) ?? ""
         guard !base.isEmpty, !model.isEmpty, key != nil || !chosen.needsKey else { return nil }
-        // A free OpenRouter model writes the brief and review with the tested
-        // fast one; a paid choice is used for everything.
-        let fast = chosen.id == "openrouter" && OpenRouterModels.isFree(model) ? OpenRouterModels.fastModel : nil
-        return OpenAICompatibleClient(provider: chosen, baseURL: base, apiKey: key, model: model, fastModel: fast)
+        return OpenAICompatibleClient(provider: chosen, baseURL: base, apiKey: key, model: model)
     }
 
     /// Apple's on-device model, when this Mac has it. It calls tools, so it can
@@ -204,10 +216,6 @@ final class AIEngine: ObservableObject {
               let kind = LocalServers.Kind.allCases.first(where: { $0.providerId == client.provider.id }),
               let status = LocalServers.shared.status[kind] else { return false }
         return !status.running
-    }
-
-    private var cloudAnswerers: [Answerer] {
-        [anthropic.map(Answerer.anthropic), cloudProvider.map(Answerer.provider)].compactMap { $0 }
     }
 
     /// Everyone who may answer, in the order they are asked. Local first never
@@ -284,6 +292,15 @@ final class AIEngine: ObservableObject {
 
     private func chat(_ messages: [ChatMessage], context: ClientContext,
                       using list: [Answerer], tools: Bool = true) async throws -> ChatResponse {
+        let messages = Guard.trim(messages)
+        // Code and harm are refused before any model is asked (see Guard).
+        if let last = messages.last, last.role == .user, let refusal = Guard.blockedReply(last.content) {
+            var response = ChatResponse(reply: refusal, actions: [])
+            response.answeredBy = .onDevice
+            response.answererName = "Four Notes"
+            response.refused = true
+            return response
+        }
         var failure: Error?
         var failedName: String?
         for answerer in list {
@@ -310,6 +327,12 @@ final class AIEngine: ObservableObject {
                     response.answeredBy = .cloud
                 }
                 response.answererName = answerer.shortName
+                // Whatever the model wrote, code and overlong answers aren't shown.
+                let shown = Guard.enforce(response.reply)
+                if shown != response.reply {
+                    response.reply = shown
+                    response.refused = true
+                }
                 // Said in the chat, not hidden in a hover: the model the user
                 // chose failed, and why.
                 if let failure, let failedName {

@@ -183,7 +183,7 @@ final class Assistant: ObservableObject {
             // Answered here, but a bigger model knows more of the world:
             // recommendations, ideas, a question about a note, or one the
             // local model said was beyond it.
-            if let cloud = engine.cloudOffer, response.answeredBy != .cloud, result.created.isEmpty,
+            if let cloud = engine.cloudOffer, response.answeredBy != .cloud, !response.refused, result.created.isEmpty,
                Intent.needsCloud(clean, localReply: response.reply, aboutNote: about != nil) {
                 reply.cloudOffer = CloudOffer(questionId: question.id, name: cloud)
             }

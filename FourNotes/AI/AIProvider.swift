@@ -1,8 +1,8 @@
 import Foundation
 
 // The AI providers that speak OpenAI's chat-completions API — OpenRouter,
-// OpenAI, Groq, Gemini, a local Ollama, or any other endpoint with the same
-// shape. The choice, address and model are settings; the key is a secret and
+// OpenCode, OpenAI, Groq, Gemini, a local Ollama, or any other endpoint with
+// the same shape. The choice, address and model are settings; the key is a secret and
 // lives in the Keychain like the Anthropic one.
 
 struct AIProvider: Identifiable, Equatable, Sendable {
@@ -37,6 +37,11 @@ struct AIProvider: Identifiable, Equatable, Sendable {
     static let all: [AIProvider] = [
         AIProvider(id: "openrouter", name: "OpenRouter", baseURL: "https://openrouter.ai/api/v1",
                    keyPage: "https://openrouter.ai/keys", modelHint: "A tested free model, or any model id"),
+        // OpenCode Zen's free models, and OpenCode Go (subscription): one key, two addresses.
+        AIProvider(id: "opencode", name: "OpenCode", baseURL: "https://opencode.ai/zen/v1",
+                   keyPage: OpenCodeModels.keysPage, modelHint: "A free OpenCode model"),
+        AIProvider(id: "opencode-go", name: "OpenCode Go", baseURL: "https://opencode.ai/zen/go/v1",
+                   keyPage: OpenCodeModels.goPage, modelHint: "An OpenCode Go model"),
         AIProvider(id: "openai", name: "OpenAI", baseURL: "https://api.openai.com/v1",
                    keyPage: "https://platform.openai.com/api-keys", modelHint: "e.g. gpt-4o-mini"),
         AIProvider(id: "groq", name: "Groq", baseURL: "https://api.groq.com/openai/v1",
@@ -51,6 +56,11 @@ struct AIProvider: Identifiable, Equatable, Sendable {
         AIProvider(id: "custom", name: "Other (OpenAI-compatible)", baseURL: "",
                    keyPage: nil, modelHint: "The model id your endpoint expects"),
     ]
+
+    /// OpenRouter and OpenCode have tabs of their own in Settings, with their own
+    /// keys and model lists; the rest share the "Other" tab and its one key.
+    var hasOwnTab: Bool { ["openrouter", "opencode", "opencode-go"].contains(id) }
+    var isOpenCode: Bool { id.hasPrefix("opencode") }
 
     static func find(_ id: String?) -> AIProvider? { all.first { $0.id == id } }
     static func all(in slot: Slot) -> [AIProvider] { all.filter { $0.slot == slot } }

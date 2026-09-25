@@ -8,8 +8,15 @@ import Security
 enum Keychain {
     enum Item: String, CaseIterable {
         case anthropicKey, anthropicModel, anthropicFastModel
-        case openrouterKey, openrouterModel
-        /// The OpenAI-compatible provider: which one, where, which model, and its key.
+        /// OpenRouter: free models, or paid ones billed to the user's credits.
+        /// The paid model is kept while on Free, so switching back restores it.
+        case openrouterKey, openrouterModel, openrouterTier, openrouterPaidModel, openrouterPaidTextOnly
+        /// OpenCode: Zen's free models, or OpenCode Go (subscription).
+        case opencodeKey, opencodeModel, opencodeTier, opencodeGoModel
+        /// Which cloud tab answers first: "anthropic", "openrouter", "opencode" or "other".
+        case cloudProvider
+        /// The "Other" OpenAI-compatible provider (OpenAI, Groq, Gemini, any
+        /// endpoint): which one, where, which model, and its key.
         case providerId, providerBaseURL, providerModel, providerKey
         /// The model server on this Mac (LM Studio, Ollama).
         case localProviderId, localProviderBaseURL, localProviderModel
@@ -23,6 +30,14 @@ enum Keychain {
             case .anthropicFastModel: return "Anthropic fast model"
             case .openrouterKey: return "OpenRouter key"
             case .openrouterModel: return "OpenRouter model"
+            case .openrouterTier: return "OpenRouter plan"
+            case .openrouterPaidModel: return "OpenRouter paid model"
+            case .openrouterPaidTextOnly: return "OpenRouter paid model is text only"
+            case .opencodeKey: return "OpenCode key"
+            case .opencodeModel: return "OpenCode model"
+            case .opencodeTier: return "OpenCode plan"
+            case .opencodeGoModel: return "OpenCode Go model"
+            case .cloudProvider: return "Cloud provider asked first"
             case .providerId: return "Provider"
             case .providerBaseURL: return "Provider address"
             case .providerModel: return "Provider model"
@@ -39,7 +54,7 @@ enum Keychain {
         /// Only real secrets are masked in the UI.
         var isSecret: Bool {
             switch self {
-            case .anthropicKey, .openrouterKey, .voyageKey, .sttKey, .providerKey: return true
+            case .anthropicKey, .openrouterKey, .opencodeKey, .voyageKey, .sttKey, .providerKey: return true
             default: return false
             }
         }

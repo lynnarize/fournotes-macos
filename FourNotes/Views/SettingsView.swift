@@ -595,9 +595,10 @@ struct SettingsView: View {
                     ProviderSlotEditor(slot: .local).id(keysGeneration)
                 }
                 modelGroup("cloud", icon: "cloud", title: "In the cloud", summary: engine.cloudSummary) {
-                    anthropicKey
-                    Divider().overlay(p.line)
-                    ProviderSlotEditor(slot: .cloud).id(keysGeneration)
+                    Text("Your own keys. They stay in your Keychain and go only to the provider, with each request.")
+                        .font(FN.small).foregroundStyle(p.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    CloudProviderTabs { anthropicKey }.id(keysGeneration)
                     Divider().overlay(p.line)
                     forgetKeys
                 }
@@ -693,7 +694,7 @@ struct SettingsView: View {
     private var anthropicKey: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Claude").font(FN.bodyMedium).foregroundStyle(p.text)
-            Text("The most accurate, and asked first in the cloud. Keys stay in your Keychain.")
+            Text("Paid, and the most accurate. Needed for “Ideas from the web”.")
                 .font(FN.small).foregroundStyle(p.muted)
                 .fixedSize(horizontal: false, vertical: true)
 

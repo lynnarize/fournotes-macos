@@ -152,6 +152,36 @@ struct OpenAICompatibleTests {
         #expect(StubProtocol.requests.first?.value(forHTTPHeaderField: "X-Title") == "Four Notes")
     }
 
+    @Test("on OpenCode, the app names itself and keeps one session per conversation")
+    func openCodeHeaders() async throws {
+        URLProtocol.registerClass(StubProtocol.self)
+        defer { URLProtocol.unregisterClass(StubProtocol.self) }
+        StubProtocol.requests = []
+        StubProtocol.responses = Array(repeating: ["choices": [["message": ["role": "assistant", "content": "Hi!"]]]],
+                                       count: 3)
+        let go = OpenAICompatibleClient(provider: AIProvider.find("opencode-go")!, baseURL: "https://stub.test/zen/go/v1",
+                                        apiKey: "sk-oc", model: "kimi-k3")
+        let opening = ChatMessage(role: .user, content: "hello")
+        _ = try await go.chat([opening], ctx: context())
+        _ = try await go.chat([opening, ChatMessage(role: .assistant, content: "Hi!"),
+                               ChatMessage(role: .user, content: "and again")], ctx: context())
+        _ = try await go.chat([ChatMessage(role: .user, content: "another chat")], ctx: context())
+
+        let sessions = StubProtocol.requests.map { $0.value(forHTTPHeaderField: "x-opencode-session") }
+        #expect(sessions.allSatisfy { $0?.count == 32 })
+        #expect(sessions[0] == sessions[1])
+        #expect(sessions[1] != sessions[2])
+        let first = try #require(StubProtocol.requests.first)
+        #expect(first.value(forHTTPHeaderField: "User-Agent")?.hasPrefix("FourNotes/") == true)
+        #expect(first.value(forHTTPHeaderField: "X-Title") == nil)
+        let body = try #require(first.httpBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        #expect(body["models"] == nil)
+        #expect(body["max_tokens"] as? Int == 2048)
+        // The chat prompt carries the assistant's limits.
+        let system = (body["messages"] as? [[String: Any]])?.first?["content"] as? String ?? ""
+        #expect(system.contains("SCOPE"))
+    }
+
     @Test("a capture sent back as JSON in prose is still filed")
     func captureFromJSONText() async throws {
         URLProtocol.registerClass(StubProtocol.self)
