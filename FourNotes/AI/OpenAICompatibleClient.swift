@@ -309,7 +309,7 @@ struct OpenAICompatibleClient {
         }
         if isOpenRouter {
             // OpenRouter's attribution headers.
-            request.setValue("https://four-notes.app", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("https://app.fournotes.xyz", forHTTPHeaderField: "HTTP-Referer")
             request.setValue("Four Notes", forHTTPHeaderField: "X-Title")
         }
     }
