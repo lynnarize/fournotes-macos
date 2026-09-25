@@ -35,6 +35,9 @@ struct ChatDock: View {
     @State private var open = false
     /// Minimized mode only: the panel is showing instead of the round button.
     @State private var expanded = false
+    /// The corner composer's frame in the window, for telling clicks outside it.
+    @State private var panelFrame: CGRect = .zero
+    @State private var outsideClicks: Any?
     @State private var unread = false
     @State private var splitTxId: String?
     @FocusState private var inputFocused: Bool
@@ -47,19 +50,30 @@ struct ChatDock: View {
                 heroComposer
             } else if minimized && !expanded {
                 roundButton
+                    // Grows back out of the corner the composer folds into.
+                    .transition(.scale(scale: 0.6, anchor: .bottomTrailing).combined(with: .opacity))
             } else if minimized {
                 // Opened from the corner: the same composer as Today's,
                 // narrower, in the corner.
                 heroComposer
+                    .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { panelFrame = $0 }
+                    .onExitCommand { collapse() }
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.trailing, 24)
                     .padding(.bottom, 20)
+                    // Opens out of the pill's corner, and folds back into it.
+                    .transition(.scale(scale: 0.4, anchor: .bottomTrailing).combined(with: .opacity))
             } else {
                 dock
             }
         }
-        .transition(.scale(scale: 0.92).combined(with: .opacity))
-        .animation(Motion.screen, value: minimized && !expanded)
+        .animation(reduceMotion ? Motion.instant : .spring(response: 0.42, dampingFraction: 0.82),
+                   value: minimized && !expanded)
+        // Opened in the corner, a click anywhere else folds it away again.
+        .onChange(of: minimized && expanded) { _, isOpen in
+            isOpen ? watchOutsideClicks() : stopWatchingClicks()
+        }
+        .onDisappear { stopWatchingClicks() }
         // Replies are model output, and a note or a web page can steer it:
         // only web links open from here.
         .environment(\.openURL, .webOnly)
@@ -94,56 +108,44 @@ struct ChatDock: View {
     private var roundButton: some View {
         HStack {
             Spacer()
-            Button { reveal(focus: true) } label: {
-                HStack(spacing: 8) {
-                    ZStack {
-                        Icon("sparkle", size: 15).foregroundStyle(p.accent)
-                        if assistant.busy != nil {
-                            Circle()
-                                .trim(from: 0, to: 0.75)
-                                .stroke(p.accent.opacity(0.8), lineWidth: 1.5)
-                                .frame(width: 24, height: 24)
-                                .rotationEffect(.degrees(spin))
-                                .onAppear {
-                                    guard !reduceMotion else { return }
-                                    // From zero each time: left at 360, the next
-                                    // busy spell had nothing to animate to.
-                                    spin = 0
-                                    withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) {
-                                        spin = 360
-                                    }
-                                }
-                        }
-                    }
-                    .frame(width: 24, height: 24)
-                    Text(assistant.busy ?? "Ask Four Notes")
-                        .font(FN.font(13.5))
-                        .foregroundStyle(p.muted)
-                        .lineLimit(1)
-                    if unread {
-                        Circle().fill(p.danger).frame(width: 8, height: 8)
-                            .transition(.scale(scale: 0.2).combined(with: .opacity))
-                    }
-                }
-                .padding(.leading, 10)
-                .padding(.trailing, 16)
-                .frame(height: 42)
-                .background(p.panel, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(p.line, lineWidth: 1))
-                .shadow(color: p.shadowStrong, radius: 14, y: 5)
-                .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            }
-            .buttonStyle(.fn)
-            .help("Assistant")
-            .accessibilityLabel("Assistant")
-            .motion(unread, Motion.standard)
-            .motion(assistant.busy, Motion.standard)
+            AskPill(busy: assistant.busy, unread: unread) { reveal(focus: true) }
         }
         .padding(.trailing, 24)
         .padding(.bottom, 20)
     }
 
-    @State private var spin: Double = 0
+    // MARK: - Clicks outside the corner composer
+
+    /// Watches clicks in the window while the corner composer is open; one
+    /// outside it — and outside the conversation above it — folds it away.
+    /// The click still goes where it was aimed.
+    private func watchOutsideClicks() {
+        guard outsideClicks == nil else { return }
+        outsideClicks = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
+            // Only the main window: the edge dock, menus the composer opens
+            // and sheets are other windows, and clicks there aren't "outside".
+            guard let window = event.window, window.canBecomeMain,
+                  let content = window.contentView else { return event }
+            let point = CGPoint(x: event.locationInWindow.x,
+                                y: content.bounds.height - event.locationInWindow.y)
+            var area = panelFrame
+            if showsConversation {
+                // The conversation floats above the input, outside its frame.
+                area.origin.y -= floatingHeight
+                area.size.height += floatingHeight
+            }
+            if !area.insetBy(dx: -4, dy: -4).contains(point) {
+                DispatchQueue.main.async { collapse() }
+            }
+            return event
+        }
+    }
+
+    private func stopWatchingClicks() {
+        if let outsideClicks { NSEvent.removeMonitor(outsideClicks) }
+        outsideClicks = nil
+    }
+
 
     // MARK: - Today's composer
 
@@ -235,7 +237,6 @@ struct ChatDock: View {
             }
             .background(p.panel, in: inputShape)
             .overlay(inputShape.stroke(p.line, lineWidth: 1))
-            .shadow(color: p.shadowStrong, radius: 18, y: 6)
             // The conversation grows up out of the input, over the page: one
             // card, so Today stays one page and nothing below it moves.
             .overlay(alignment: .top) {
@@ -244,13 +245,15 @@ struct ChatDock: View {
                         .background(p.panel, in: conversationShape)
                         .clipShape(conversationShape)
                         .overlay(conversationShape.stroke(p.line, lineWidth: 1))
-                        .shadow(color: .black.opacity(0.22), radius: 20, y: -6)
                         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { floatingHeight = $0 }
                         // Sitting exactly on the input, sharing its edge.
                         .offset(y: -floatingHeight + 1)
                         .transition(.opacity.combined(with: .offset(y: 12)))
                 }
             }
+            // One shadow for the whole card, so none falls across the seam.
+            .compositingGroup()
+            .shadow(color: p.shadowStrong, radius: 18, y: 6)
             .animation(Motion.screen, value: open || assistant.recording)
 
             if !minimized {
@@ -470,6 +473,7 @@ struct ChatDock: View {
     }
 
     private func collapse() {
+        inputFocused = false
         expanded = false
         open = false
     }
@@ -768,6 +772,104 @@ private struct CloudMark: View {
         .background(p.hover, in: Capsule())
         .help("Answered by \(name) in the cloud, because you asked for it.")
         .accessibilityLabel("Answered by \(name) in the cloud")
+    }
+}
+
+/// The assistant folded into the corner. Alive without being busy: the
+/// sparkle breathes, a soft light passes over the words every few seconds,
+/// and it lifts under the pointer. All of it is Core Animation, so an idle
+/// pill costs nothing, and all of it stops with Reduce Motion.
+private struct AskPill: View {
+    @Environment(\.palette) private var p
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let busy: String?
+    let unread: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+    @State private var spin = false
+    @State private var shown = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                ZStack {
+                    Icon("sparkle", size: 15)
+                        .foregroundStyle(p.accent)
+                        .phaseAnimator(reduceMotion ? [false] : [false, true]) { icon, up in
+                            icon.scaleEffect(up ? 1.16 : 0.88)
+                                .rotationEffect(.degrees(up ? 16 : -10))
+                        } animation: { _ in .easeInOut(duration: 1.6) }
+                    if busy != nil {
+                        Circle()
+                            .trim(from: 0, to: 0.72)
+                            .stroke(p.accent.opacity(0.8), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                            .frame(width: 24, height: 24)
+                            .rotationEffect(.degrees(spin ? 360 : 0))
+                            .onAppear {
+                                guard !reduceMotion else { return }
+                                spin = false
+                                withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) { spin = true }
+                            }
+                            .transition(.opacity)
+                    }
+                }
+                .frame(width: 24, height: 24)
+
+                Text(busy ?? "Ask Four Notes")
+                    .font(FN.font(13.5))
+                    .foregroundStyle(hovering ? p.text : p.muted)
+                    .lineLimit(1)
+                    // A band of light that crosses the words now and then.
+                    .overlay {
+                        GeometryReader { proxy in
+                            let width = proxy.size.width
+                            LinearGradient(colors: [.clear, p.text.opacity(0.6), .clear],
+                                           startPoint: .leading, endPoint: .trailing)
+                                .frame(width: width * 0.45)
+                                // Crosses in 1.4s, then rests for 3s.
+                                .keyframeAnimator(initialValue: -0.6, repeating: true) { band, x in
+                                    band.offset(x: width * x)
+                                } keyframes: { _ in
+                                    CubicKeyframe(1.2, duration: 1.4)
+                                    LinearKeyframe(1.2, duration: 3)
+                                }
+                        }
+                        .mask(Text(busy ?? "Ask Four Notes").font(FN.font(13.5)).lineLimit(1))
+                        .allowsHitTesting(false)
+                        .opacity(reduceMotion ? 0 : 1)
+                    }
+
+                if unread {
+                    Circle().fill(p.danger).frame(width: 8, height: 8)
+                        .transition(.scale(scale: 0.2).combined(with: .opacity))
+                }
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, 16)
+            .frame(height: 42)
+            .background(p.panel, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(hovering ? p.accent.opacity(0.45) : p.line, lineWidth: 1))
+            .shadow(color: p.shadowStrong, radius: hovering ? 20 : 14, y: hovering ? 8 : 5)
+            .scaleEffect(hovering ? 1.04 : 1, anchor: .bottomTrailing)
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+        .buttonStyle(.fn)
+        .onHover { hovering = $0 }
+        .animation(reduceMotion ? Motion.instant : .spring(response: 0.3, dampingFraction: 0.7), value: hovering)
+        .animation(Motion.standard, value: unread)
+        .animation(Motion.standard, value: busy)
+        .help("Assistant")
+        .accessibilityLabel("Assistant")
+        .accessibilityValue(unread ? "New reply" : (busy ?? ""))
+        // A small pop on arrival, from the corner it lives in.
+        .scaleEffect(shown ? 1 : 0.85, anchor: .bottomTrailing)
+        .opacity(shown ? 1 : 0)
+        .onAppear {
+            guard !reduceMotion else { shown = true; return }
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.7)) { shown = true }
+        }
     }
 }
 

@@ -8,18 +8,19 @@ private let KOFI_URL = "https://ko-fi.com/lynnarize"
 
 private let PRIVACY_POINTS: [(icon: String, title: String, text: String)] = [
     ("shield", "Saved on this Mac",
-     "Everything you add is stored in a file on this Mac. Nothing leaves it unless you use AI features or turn on sync."),
+     "Everything you add is stored in a file on this Mac. There's no account and no Four Notes server."),
     ("sparkle", "Shared with AI only when you ask",
-     "With no key, AI runs on this Mac. With one, chat messages, scanned photos and voice notes go straight to the provider you chose (Anthropic, OpenRouter, OpenAI…) to be read. The results are saved here."),
-    ("cloud", "Sync is optional",
-     "With sync on, a copy is kept in a private app folder in your own Drive. You can delete it any time."),
+     "Apple Intelligence and models in LM Studio or Ollama answer on this Mac. A cloud model you add gets only what a request needs, straight from this Mac. The results are saved here."),
+    ("cloud", "Little else goes online",
+     "Exchange rates are looked up by currency code, and Check for updates asks GitHub. That's all."),
     ("key", "Your API keys stay private",
-     "Keys are kept in this Mac's Keychain only. They are never synced or included in backups."),
+     "Keys are kept in this Mac's Keychain only. They are never included in backups."),
 ]
 
 struct SettingsView: View {
     @ObservedObject private var dock = EdgeDock.shared
     @ObservedObject private var stickies = EdgeStickies.shared
+    @ObservedObject private var updates = UpdateCheck.shared
     @Environment(\.palette) private var p
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: Store
@@ -77,6 +78,9 @@ struct SettingsView: View {
                 section("legal", icon: "book", title: "Privacy & Terms",
                         summary: "Updated \(LegalDocument.lastUpdated)") {
                     legal
+                }
+                section("about", icon: "info", title: "About", summary: "Version \(AppVersion.short)") {
+                    about
                 }
                 kofi
             }
@@ -326,6 +330,60 @@ struct SettingsView: View {
             }
             .font(FN.small)
             .padding(.top, 2)
+        }
+    }
+
+    // MARK: - About
+
+    private var about: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 24) {
+                versionField("Version", AppVersion.marketing)
+                versionField("Build", AppVersion.build)
+                if let commit = AppVersion.commit { versionField("Commit", commit) }
+                Spacer()
+            }
+            .textSelection(.enabled)
+
+            HStack(spacing: 8) {
+                SecondaryButton(title: updates.state == .checking ? "Checking…" : "Check for updates") {
+                    updates.check()
+                }
+                .disabled(updates.state == .checking)
+                GhostButton(action: { NSWorkspace.shared.open(AppVersion.releasesPage) }) {
+                    Text("Release notes")
+                }
+            }
+            updateStatus
+        }
+    }
+
+    private func versionField(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(FN.small).foregroundStyle(p.muted)
+            Text(value).font(FN.bodyMedium).foregroundStyle(p.text).monospacedDigit()
+        }
+    }
+
+    @ViewBuilder
+    private var updateStatus: some View {
+        switch updates.state {
+        case .idle, .checking:
+            Text("Asks GitHub for the latest release. Nothing else is sent.")
+                .font(FN.small).foregroundStyle(p.faint)
+        case .upToDate:
+            Label { Text("You're on the latest version.") } icon: { Icon("check", size: 13) }
+                .font(FN.small).foregroundStyle(p.muted)
+        case .available(let version, let page):
+            HStack(spacing: 8) {
+                Text("Version \(version) is available.").font(FN.small).foregroundStyle(p.text)
+                Button("Download") { NSWorkspace.shared.open(page) }
+                    .buttonStyle(.fn)
+                    .font(FN.small)
+                    .foregroundStyle(p.accent)
+            }
+        case .failed(let message):
+            Text(message).font(FN.small).foregroundStyle(p.danger)
         }
     }
 
@@ -667,7 +725,7 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Danger zone").font(FN.bodyMedium).foregroundStyle(p.danger)
-                Text("Erase all notes, tasks, spending, settings and saved API keys from this Mac. A Drive copy, if you have one, isn't touched. This can't be undone.")
+                Text("Erase all notes, tasks, spending, settings and saved API keys from this Mac. This can't be undone.")
                     .font(FN.small).foregroundStyle(p.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 if confirmWipe {

@@ -9,7 +9,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.1.1"
+    MARKETING_VERSION: "0.1.2"
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_IDENTITY: "-"
@@ -36,6 +36,24 @@ targets:
         ENABLE_PREVIEWS: YES
         COMBINE_HIDPI_IMAGES: YES
         CODE_SIGN_ENTITLEMENTS: FourNotes/Resources/FourNotes.entitlements
+        # The stamp script below reads .git and writes the built Info.plist.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      # Every build says which commit it is: CFBundleVersion becomes the commit
+      # count (always rising on main) and FNGitCommit the short hash, "-dirty"
+      # with uncommitted changes. Settings → About shows both. Runs before
+      # signing, so the signature covers the stamped plist.
+      - name: Stamp build number and commit
+        basedOnDependencyAnalysis: false
+        script: |
+          PLIST="$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+          if ! git -C "$SRCROOT" rev-parse --git-dir >/dev/null 2>&1; then exit 0; fi
+          BUILD=$(git -C "$SRCROOT" rev-list --count HEAD)
+          COMMIT=$(git -C "$SRCROOT" rev-parse --short HEAD)
+          git -C "$SRCROOT" diff --quiet HEAD -- || COMMIT="$COMMIT-dirty"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :FNGitCommit" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :FNGitCommit string $COMMIT" "$PLIST"
 
   FourNotesTests:
     type: bundle.unit-test

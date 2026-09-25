@@ -6,8 +6,8 @@ import CoreGraphics
 // way the Dynamic Island splits in two: when the pointer reaches the handle
 // the bubbles pull out of its top and bottom and snap free along the edge —
 // the first above, the next below, then further out. Pointing at a bubble
-// stretches it into a pill with the note's title; a click grows the handle
-// into the note. Moving away draws them all back into the handle.
+// stretches it into a pill with the note's title; a click pops the note out
+// into its own window beside the edge. Moving away draws them all back into the handle.
 
 enum StickyTint: String, CaseIterable, Codable, Sendable {
     case yellow, pink, blue, green, violet
@@ -65,10 +65,11 @@ enum StickyGeometry {
     }
 
     /// The dock's window while the bubbles are out: the handle's, taller to
-    /// hold them and wider to hold one stretched into a pill.
-    static func islandWindow(handle: CGRect, edge: DockEdge, slots: [CGFloat]) -> CGRect {
+    /// hold them and wider to hold one stretched into a pill — or, not
+    /// `wide`, only as wide as the bubbles, resting beside an open note.
+    static func islandWindow(handle: CGRect, edge: DockEdge, slots: [CGFloat], wide: Bool = true) -> CGRect {
         guard let top = slots.max(), let bottom = slots.min() else { return handle }
-        let reach = bubbleInset + pillWidth + islandMargin
+        let reach = bubbleInset + (wide ? pillWidth : bubble) + islandMargin
         let x = edge == .right ? handle.maxX - reach : handle.minX
         let minY = bottom - bubble / 2 - islandMargin
         let maxY = top + bubble / 2 + islandMargin
@@ -88,25 +89,66 @@ enum StickyGeometry {
         return CGRect(x: x, y: centerY - bubble / 2, width: pillWidth, height: bubble)
     }
 
-    // Open
-    static let noteWidth: CGFloat = 300
-    static let noteHeight: CGFloat = 280
-    static let noteCorner: CGFloat = 24
-    static let noteFillet: CGFloat = 26
-    /// Room around the open note for its shadow.
-    static let margin: CGFloat = 20
+    // Open: the note's own window beside the edge
+    static let paperWidth: CGFloat = 300
+    static let paperHeight: CGFloat = 340
+    /// Room round the paper for its shadow, and for it to pop out.
+    static let windowMargin: CGFloat = 36
+    /// From the screen edge to the paper: clear of the bubbles, and of the
+    /// dock's window while they rest beside it.
+    static let edgeGap: CGFloat = 60
+    /// The strip along the paper's top it's dragged by.
+    static let stripHeight: CGFloat = 30
+    /// Each note opened onto the same place moves along by this much.
+    static let cascade: CGFloat = 28
 
-    /// The open note, grown out of the handle and centred on it as far as the
-    /// screen allows.
-    static func note(in visible: CGRect, edge: DockEdge, centerY: CGFloat) -> DockGeometry {
-        let reach = noteHeight / 2 + noteFillet
-        let cy = clamp(centerY, visible.minY + reach, visible.maxY - reach)
-        let width = noteWidth + margin
-        let height = noteHeight + 2 * (noteFillet + margin)
-        let x = edge == .right ? visible.maxX - width : visible.minX
-        let frame = CGRect(x: x, y: cy - height / 2, width: width, height: height)
-        return DockGeometry(frame: frame, centerFromTop: height / 2, bodyWidth: noteWidth,
-                            bodyHeight: noteHeight, corner: noteCorner, fillet: noteFillet)
+    static var windowSize: CGSize {
+        CGSize(width: paperWidth + 2 * windowMargin, height: paperHeight + 2 * windowMargin)
+    }
+
+    /// Where a note opens: beside the edge, level with `anchor` (the bubble
+    /// it came out of), its paper kept on screen — and moved along from any
+    /// note already open in the same place.
+    static func window(anchor: CGPoint, edge: DockEdge, in visible: CGRect,
+                       avoiding taken: [CGRect] = []) -> CGRect {
+        let size = windowSize
+        let x = edge == .right
+            ? visible.maxX - edgeGap - paperWidth - windowMargin
+            : visible.minX + edgeGap - windowMargin
+        func onScreen(_ f: CGRect) -> CGRect {
+            let m = windowMargin
+            return CGRect(x: clamp(f.minX, visible.minX - m, visible.maxX - size.width + m),
+                          y: clamp(f.minY, visible.minY - m, visible.maxY - size.height + m),
+                          width: size.width, height: size.height)
+        }
+        var frame = onScreen(CGRect(x: x, y: anchor.y - size.height / 2, width: size.width, height: size.height))
+        for _ in 0..<12 {
+            guard taken.contains(where: { abs($0.minX - frame.minX) < 8 && abs($0.minY - frame.minY) < 8 })
+            else { break }
+            frame.origin.x += edge == .right ? -cascade : cascade
+            frame.origin.y -= cascade
+            frame = onScreen(frame)
+        }
+        return frame
+    }
+
+    /// How far to move a note's `paper` that was let go partly off screen,
+    /// so its top strip — what it's dragged by — is still on the screen, and
+    /// enough of it across to take hold of.
+    static func keepGrabbable(_ paper: CGRect, in visible: CGRect) -> CGVector {
+        let strip = stripHeight, across: CGFloat = 80
+        var dx: CGFloat = 0, dy: CGFloat = 0
+        if paper.maxY > visible.maxY {
+            dy = visible.maxY - paper.maxY
+        } else if paper.maxY - strip < visible.minY {
+            dy = visible.minY + strip - paper.maxY
+        }
+        if paper.maxX < visible.minX + across {
+            dx = visible.minX + across - paper.maxX
+        } else if paper.minX > visible.maxX - across {
+            dx = visible.maxX - across - paper.minX
+        }
+        return CGVector(dx: dx, dy: dy)
     }
 
     private static func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat {

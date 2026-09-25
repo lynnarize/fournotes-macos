@@ -28,6 +28,7 @@
 		289A9030AADF9DED547BA7E1 /* NotesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 921B79A9CA948B7CA1AB519C /* NotesView.swift */; };
 		32BAB04D04D71A05D874DA93 /* EdgeStickies.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED355003C410CBADC358D8F6 /* EdgeStickies.swift */; };
 		35367582F1F0565CB19375E8 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2212FC627D7530F73F016D38 /* Components.swift */; };
+		3761C24EF939AA7BC3E06670 /* StickyWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9798487A1062F86DA1BAEB02 /* StickyWindow.swift */; };
 		37B0AF5AD488DA0CA48FA965 /* Samples.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CBDE3D527C65CBFCA97BE24 /* Samples.swift */; };
 		3838D345A0426EB6B70BFDF1 /* Navigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B2529344BE3DA616CEC09D0 /* Navigation.swift */; };
 		397538E047A15F1306666B27 /* MoneyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B94B86631924B5EC4BDC7491 /* MoneyTests.swift */; };
@@ -38,6 +39,7 @@
 		438E2304987A5322BD29B14C /* OnDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 803C897593EA7A419E92AAB9 /* OnDevice.swift */; };
 		454517D0747C7F8CCF40E348 /* AppleTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBC75F3AABEEF276D287670F /* AppleTools.swift */; };
 		48B97FC3F8F3205993BE871A /* verified-models.json in Resources */ = {isa = PBXBuildFile; fileRef = 3DCE81164C082595BABF6B5C /* verified-models.json */; };
+		48D7ED5CAA65792E135961FE /* UpdateCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A94CC6B8FB9F6838F9B470A /* UpdateCheck.swift */; };
 		4931C6AC459447BEAF64C461 /* LocalProviderEvalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A6597687751A182F37B808A /* LocalProviderEvalTests.swift */; };
 		4BF54575D72F57890ED119D9 /* AIEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BBF07DB642E9646000EAA17 /* AIEngine.swift */; };
 		4DD32BD545A8AA1C5F251605 /* PersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75E90D5E166B77A093AEDE98 /* PersistenceTests.swift */; };
@@ -59,6 +61,7 @@
 		682E5A35CAABD45393CC6F1E /* DockGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76A23C2B2F7EE305CBF323F3 /* DockGeometry.swift */; };
 		6842AFBF81D54CF9E3FB6548 /* FourNotesApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0017648AD582729C3591D795 /* FourNotesApp.swift */; };
 		6A4A2783D230800158C32586 /* TodoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BB87D9D0FE20DC866A3DC96 /* TodoView.swift */; };
+		6B330D734663109B5D307BB3 /* AppVersionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57A49BACDAB55C4F0EBAD7F4 /* AppVersionTests.swift */; };
 		71A6DC009E667C8123CB1DD6 /* ArchiveSizeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E4F291270323434DACF1F1 /* ArchiveSizeTests.swift */; };
 		72264C285D6CC80E58E23D6F /* Assistant.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA2815765406AD5F2C046202 /* Assistant.swift */; };
 		75837B50BB5D2D67116E2322 /* Persistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4DD5060BD2FBE542D0791BC /* Persistence.swift */; };
@@ -69,6 +72,7 @@
 		83FEF5886597EA967EC19A4C /* SafeNumber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D0356A5ECA3BC9C82505D94 /* SafeNumber.swift */; };
 		841FCAFAEF6D9CA2C4605DA4 /* EdgeDock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34C24D3E3C71CA41611B711D /* EdgeDock.swift */; };
 		8444B31472CDCD6CBF093CEC /* AIText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A068D371C3A3A3AC28E2CCB /* AIText.swift */; };
+		845DC77B258260FD5B1C0D69 /* EditorFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D57F6CFA0FC9EC375AFB36CF /* EditorFormattingTests.swift */; };
 		88F41ABF365A871685FD8416 /* ChatDock.swift in Sources */ = {isa = PBXBuildFile; fileRef = F108CA1847768435773C7868 /* ChatDock.swift */; };
 		89DC74C0A20BC2C973EC3839 /* Fingerprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C2EEB8AD4ADE795B2CCCE4 /* Fingerprint.swift */; };
 		8CE5F7EFDC3F3CEB5465F334 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0397D6B727B3A3D7AD1F64D8 /* SidebarView.swift */; };
@@ -147,6 +151,7 @@
 		0397D6B727B3A3D7AD1F64D8 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		067F1656ABAB186DEDCDAF89 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
 		08DFB10C95CF669C2FFD069E /* DockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockView.swift; sourceTree = "<group>"; };
+		0A94CC6B8FB9F6838F9B470A /* UpdateCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCheck.swift; sourceTree = "<group>"; };
 		10B40E2ACC5D07FAB58D52CC /* StickyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StickyView.swift; sourceTree = "<group>"; };
 		13C2EEB8AD4ADE795B2CCCE4 /* Fingerprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fingerprint.swift; sourceTree = "<group>"; };
 		13E4F291270323434DACF1F1 /* ArchiveSizeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchiveSizeTests.swift; sourceTree = "<group>"; };
@@ -190,6 +195,7 @@
 		558F49CD2FD82FFE1000E23F /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
 		55A77CE18E464DA0C74805C0 /* DockKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockKit.swift; sourceTree = "<group>"; };
 		5712836DCD481A00798BAF5E /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
+		57A49BACDAB55C4F0EBAD7F4 /* AppVersionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppVersionTests.swift; sourceTree = "<group>"; };
 		597D46E80428E7A1B3CC8D9A /* InsightsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsTests.swift; sourceTree = "<group>"; };
 		5B02D375A6C8BD9DFE6ABD58 /* LocalServersTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalServersTests.swift; sourceTree = "<group>"; };
 		5B2529344BE3DA616CEC09D0 /* Navigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation.swift; sourceTree = "<group>"; };
@@ -221,6 +227,7 @@
 		925D028898217D8FA6718D76 /* MonthlyReviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthlyReviewTests.swift; sourceTree = "<group>"; };
 		95D9EFC72C077CDC3087A530 /* OnDeviceEvalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceEvalTests.swift; sourceTree = "<group>"; };
 		969DD670746EDE69D8E12700 /* AttachmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentTests.swift; sourceTree = "<group>"; };
+		9798487A1062F86DA1BAEB02 /* StickyWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StickyWindow.swift; sourceTree = "<group>"; };
 		98ACD6F73909391D5E06B7E0 /* FourNotes.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FourNotes.entitlements; sourceTree = "<group>"; };
 		9BB87D9D0FE20DC866A3DC96 /* TodoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodoView.swift; sourceTree = "<group>"; };
 		9D0356A5ECA3BC9C82505D94 /* SafeNumber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafeNumber.swift; sourceTree = "<group>"; };
@@ -251,6 +258,7 @@
 		CB06CF86472E9A3040FD4186 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		CCFB05D71F676EE9021191B6 /* Store+Actions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Store+Actions.swift"; sourceTree = "<group>"; };
 		D3847037F890C0259EDD5918 /* EmptyStart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyStart.swift; sourceTree = "<group>"; };
+		D57F6CFA0FC9EC375AFB36CF /* EditorFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFormattingTests.swift; sourceTree = "<group>"; };
 		D8DE9165AE7C0251D0719D45 /* ReportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportView.swift; sourceTree = "<group>"; };
 		D944259E9EF48C5B99ABC0D1 /* SplitEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitEditor.swift; sourceTree = "<group>"; };
 		DA0966EB3CCEA639F79F2EA2 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -317,6 +325,7 @@
 				ED08784CDCFDC37BE15E130F /* LocalServers.swift */,
 				52B5CF43837AA22B3B8541E3 /* QuickTranscriber.swift */,
 				EEC7A6DF5DE2A170E71F69B0 /* Search.swift */,
+				0A94CC6B8FB9F6838F9B470A /* UpdateCheck.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -421,11 +430,13 @@
 		6B9B97DD8494EF1AE4000949 /* FourNotesTests */ = {
 			isa = PBXGroup;
 			children = (
+				57A49BACDAB55C4F0EBAD7F4 /* AppVersionTests.swift */,
 				13E4F291270323434DACF1F1 /* ArchiveSizeTests.swift */,
 				969DD670746EDE69D8E12700 /* AttachmentTests.swift */,
 				2366BBA1607F5C6E90B55F2B /* BriefParagraphTests.swift */,
 				AAC81BDB4C3F5ED3C5847C82 /* CheckboxRenderingTests.swift */,
 				7AC06EA635E97FF24389BB57 /* EdgeDockTests.swift */,
+				D57F6CFA0FC9EC375AFB36CF /* EditorFormattingTests.swift */,
 				90E94B670095BE3D408B245B /* EditorUndoTests.swift */,
 				508604DE2061D9E2E5D7606E /* IconTests.swift */,
 				597D46E80428E7A1B3CC8D9A /* InsightsTests.swift */,
@@ -514,6 +525,7 @@
 				7CD9A9BC95FC2F3CE58CB283 /* StickyGeometry.swift */,
 				4DE01DC69DB77DEA9B848D27 /* StickyText.swift */,
 				10B40E2ACC5D07FAB58D52CC /* StickyView.swift */,
+				9798487A1062F86DA1BAEB02 /* StickyWindow.swift */,
 			);
 			path = Dock;
 			sourceTree = "<group>";
@@ -545,6 +557,7 @@
 			buildPhases = (
 				6927D7276FE35D9AD11E388B /* Sources */,
 				5AE1C0FBFAAFBED92F6BC14D /* Resources */,
+				DFF61C2BC486FBCECC5EB4A8 /* Stamp build number and commit */,
 			);
 			buildRules = (
 			);
@@ -609,16 +622,40 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		DFF61C2BC486FBCECC5EB4A8 /* Stamp build number and commit */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp build number and commit";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "PLIST=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\nif ! git -C \"$SRCROOT\" rev-parse --git-dir >/dev/null 2>&1; then exit 0; fi\nBUILD=$(git -C \"$SRCROOT\" rev-list --count HEAD)\nCOMMIT=$(git -C \"$SRCROOT\" rev-parse --short HEAD)\ngit -C \"$SRCROOT\" diff --quiet HEAD -- || COMMIT=\"$COMMIT-dirty\"\n/usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $BUILD\" \"$PLIST\"\n/usr/libexec/PlistBuddy -c \"Delete :FNGitCommit\" \"$PLIST\" 2>/dev/null || true\n/usr/libexec/PlistBuddy -c \"Add :FNGitCommit string $COMMIT\" \"$PLIST\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		0F42C2B4C49993504563D22E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6B330D734663109B5D307BB3 /* AppVersionTests.swift in Sources */,
 				71A6DC009E667C8123CB1DD6 /* ArchiveSizeTests.swift in Sources */,
 				F25E4DBC8C6E0C9848C0EEDF /* AttachmentTests.swift in Sources */,
 				F57F4DE66DAC68CD4C35A112 /* BriefParagraphTests.swift in Sources */,
 				050D15FF550D1027A6D94E5B /* CheckboxRenderingTests.swift in Sources */,
 				9697AD49A75B51ADE5B8CD6D /* EdgeDockTests.swift in Sources */,
+				845DC77B258260FD5B1C0D69 /* EditorFormattingTests.swift in Sources */,
 				533F18F766774CC23C503557 /* EditorUndoTests.swift in Sources */,
 				F0CA5FA668F3A2A494856254 /* IconTests.swift in Sources */,
 				783073922BBBBAACF9A3E7E6 /* InsightsTests.swift in Sources */,
@@ -733,6 +770,7 @@
 				62A22D8A8C87C190D0EA7005 /* StickyGeometry.swift in Sources */,
 				C6187A6FD54654BE37BF9874 /* StickyText.swift in Sources */,
 				B6B48D102AFF45D399D9E1D8 /* StickyView.swift in Sources */,
+				3761C24EF939AA7BC3E06670 /* StickyWindow.swift in Sources */,
 				4F2B0C18E8FD45CB1235E280 /* Store+Actions.swift in Sources */,
 				BB485B3E078E41A9FA5A3421 /* Store.swift in Sources */,
 				189E26D6D68418D7716F0144 /* TaskPanel.swift in Sources */,
@@ -740,6 +778,7 @@
 				4F7EDAB4CF05030582E21B3E /* Toast.swift in Sources */,
 				D0BF45B747112FA58802279C /* TodayView.swift in Sources */,
 				6A4A2783D230800158C32586 /* TodoView.swift in Sources */,
+				48D7ED5CAA65792E135961FE /* UpdateCheck.swift in Sources */,
 				BE79F3014A0CA1AB6D075472 /* Wallet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -762,6 +801,7 @@
 				CODE_SIGN_ENTITLEMENTS = FourNotes/Resources/FourNotes.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = FourNotes/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -830,7 +870,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.1.2;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -885,6 +925,7 @@
 				CODE_SIGN_ENTITLEMENTS = FourNotes/Resources/FourNotes.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = FourNotes/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -947,7 +988,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.1.2;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

@@ -116,7 +116,7 @@ struct DockRoot: View {
                     // Always there, only hidden while closed: a click beside the
                     // drawer must not cost a draft, a reply on its way or the
                     // scroll position. Clipped away by the handle's shape.
-                    let showsDrawer = dock.isOpen && dock.openSticky == nil
+                    let showsDrawer = dock.isOpen
                     DrawerView(dock: dock)
                         .frame(width: DockGeometry.drawerWidth, height: dock.drawerHeight)
                         .position(x: x(for: DockGeometry.drawerWidth, in: width),
@@ -124,17 +124,6 @@ struct DockRoot: View {
                         .opacity(showsDrawer ? 1 : 0)
                         .allowsHitTesting(showsDrawer)
                         .accessibilityHidden(!showsDrawer)
-
-                    // A stuck note, grown out of the handle in place of the drawer.
-                    if let id = dock.openSticky {
-                        StickyPage(dock: dock, noteId: id)
-                            .frame(width: StickyGeometry.noteWidth, height: StickyGeometry.noteHeight)
-                            .position(x: x(for: StickyGeometry.noteWidth, in: width),
-                                      y: drawerWindow ? proxy.size.height / 2 : g.centerFromTop)
-                            .opacity(dock.isOpen ? 1 : 0)
-                            .allowsHitTesting(dock.isOpen)
-                            .id(id)
-                    }
                 }
                 .clipShape(shape)
             }

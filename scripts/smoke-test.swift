@@ -9,7 +9,7 @@ import CoreGraphics
 // tests cannot reach — in particular that the "Show" buttons actually navigate,
 // which was broken for the app's whole life without anyone noticing.
 //
-//   swift smoke-test.swift
+//   swift scripts/smoke-test.swift
 //
 // Needs Accessibility permission for whichever process runs it
 // (System Settings -> Privacy & Security -> Accessibility).

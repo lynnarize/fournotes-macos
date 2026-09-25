@@ -1,10 +1,10 @@
 import Foundation
 
-// Today's brief as one short paragraph, for when a point-by-point list is
-// more than you want to read. Written from the same data as the list, so it
-// is there at once and needs no model. The phrases worth a closer look are
-// links — a task, yesterday's spending, a budget — and clicking one goes to
-// where the details are.
+// Today's brief as one short paragraph told like a story, for when a
+// point-by-point list is more than you want to read. Written from the same
+// data as the list, so it is there at once and needs no model. The phrases
+// worth a closer look are links — a task, yesterday's spending, a budget —
+// and clicking one goes to where the details are.
 
 enum BriefParagraph {
     /// Where a phrase leads.
@@ -52,54 +52,69 @@ enum BriefParagraph {
         var notesToday: [NoteRef]
     }
 
+    /// The day told as a short story, in order: how yesterday ended, what
+    /// today holds, what to keep an eye on along the way, and what's already
+    /// been jotted down. Only the parts with something to say are told.
     static func compose(_ input: Input) -> [Piece] {
         var out: [Piece] = []
         func plain(_ s: String) { out.append(Piece(text: s, target: nil)) }
         func link(_ s: String, _ t: Target) { out.append(Piece(text: s, target: t)) }
+        func space() { if !out.isEmpty { plain(" ") } }
 
-        // Tasks.
-        let startOfToday = Calendar.current.startOfDay(for: input.now)
-        if let first = input.due.first {
-            let count = input.due.count
-            let isLate = { (t: Item) in (t.due ?? input.now) < startOfToday }
-            plain("You have ")
-            link(count == 1 ? "one thing due" : "\(count) things due", .todos)
-            plain(count == 1 ? " today: " : " today, starting with ")
-            link(name(first.title), .todo(first.id))
-            if isLate(first) {
-                plain(", which is overdue")
-            } else if let due = first.due, hasTime(due) {
-                plain(" at \(Fmt.time(due))")
+        // How yesterday ended.
+        let total = input.yesterday.reduce(0) { $0 + $1.amount }
+        if total > 0 {
+            plain("Yesterday closed with ")
+            link(Money.format(total, input.currency, compact: true), .finance)
+            plain(" spent")
+            if let top = topCategory(input.yesterday), !top.isEmpty {
+                let categories = Set(input.yesterday.map(\.category)).count
+                plain(categories > 1 ? ", most of it on \(top)" : " on \(top)")
             }
-            if let late = input.due.dropFirst().first(where: isLate) {
-                plain(", and ")
-                link(name(late.title), .todo(late.id))
-                plain(" is overdue")
+            plain(".")
+        }
+
+        // What today holds.
+        space()
+        let startOfToday = Calendar.current.startOfDay(for: input.now)
+        let isLate = { (t: Item) in (t.due ?? input.now) < startOfToday }
+        let when = { (t: Item) -> String in
+            if isLate(t) { return ", carried over from an earlier day" }
+            if let due = t.due, hasTime(due) { return " at \(Fmt.time(due))" }
+            return ""
+        }
+        if let first = input.due.first {
+            plain("\(stage(input.now)) holds ")
+            if input.due.count == 1 {
+                plain("just ")
+                link("one task", .todos)
+                plain(": ")
+                link(name(first.title), .todo(first.id))
+                plain(when(first))
+            } else {
+                link("\(input.due.count) tasks", .todos)
+                plain(", and it opens with ")
+                link(name(first.title), .todo(first.id))
+                plain(when(first))
+                if !isLate(first), let late = input.due.dropFirst().first(where: isLate) {
+                    plain(", while ")
+                    link(name(late.title), .todo(late.id))
+                    plain(" has been waiting since an earlier day")
+                }
             }
             plain(".")
         } else if let top = input.focus.first {
-            plain("Nothing is due today, so ")
+            plain("Nothing is pressing today, which leaves room for ")
             link(name(top.title), .todo(top.id))
-            plain(" could be the one to move forward.")
+            plain(" to finally move forward.")
         } else {
-            plain("Nothing is due today.")
+            plain("Nothing is pressing today, so the page is yours to fill.")
         }
 
-        // Yesterday's spending.
-        let total = input.yesterday.reduce(0) { $0 + $1.amount }
-        if total > 0 {
-            plain(" Yesterday you spent ")
-            link(Money.format(total, input.currency, compact: true), .finance)
-            if let top = topCategory(input.yesterday), input.yesterday.count > 1 {
-                plain(", mostly on \(top)")
-            }
-            plain(".")
-        }
-
-        // Heads-up: at most two, without the figures in brackets.
-        let alerts = input.alerts.prefix(2).map(shortAlert)
+        // Along the way: at most two, without the figures in brackets.
+        let alerts = input.alerts.prefix(2).map { asClause(shortAlert($0)) }
         if !alerts.isEmpty {
-            plain(" Heads-up: ")
+            plain(" Along the way, keep in mind that ")
             for (i, alert) in alerts.enumerated() {
                 if i > 0 { plain(" and ") }
                 link(alert, .finance)
@@ -107,15 +122,15 @@ enum BriefParagraph {
             plain(".")
         }
 
-        // Quick notes.
+        // What's already been jotted down.
         if let only = input.notesToday.first, input.notesToday.count == 1 {
-            plain(" You jotted down ")
-            link(name(only.title, fallback: "a quick note"), .note(only.id))
-            plain(".")
+            plain(" And ")
+            link(name(only.title, fallback: "the quick note"), .note(only.id))
+            plain(", jotted down earlier, is right where you left it.")
         } else if input.notesToday.count > 1 {
-            plain(" You jotted down ")
+            plain(" And the ")
             link("\(input.notesToday.count) quick notes", .notes)
-            plain(".")
+            plain(" you jotted down today are right where you left them.")
         }
 
         return merged(out)
@@ -176,6 +191,22 @@ enum BriefParagraph {
         return totals.max { $0.value < $1.value || ($0.value == $1.value && $0.key > $1.key) }?.key
     }
 
+    /// Where the day's story picks up, going by the time of day.
+    private static func stage(_ now: Date) -> String {
+        switch Calendar.current.component(.hour, from: now) {
+        case 0..<12: return "The day ahead"
+        case 12..<18: return "The rest of the afternoon"
+        default: return "The evening"
+        }
+    }
+
+    /// "Food budget 85% used" → "your Food budget is 85% used", so it reads
+    /// in a sentence; the other heads-ups already do.
+    static func asClause(_ alert: String) -> String {
+        alert.replacingOccurrences(of: "^(.+) budget (\\d+% used)$", with: "your $1 budget is $2",
+                                   options: .regularExpression)
+    }
+
     /// "Food budget 85% used (Rp 850k of Rp 1jt)" → "Food budget 85% used".
     static func shortAlert(_ alert: String) -> String {
         alert.replacingOccurrences(of: "\\s*\\([^)]*\\)\\s*$", with: "", options: .regularExpression)
@@ -212,7 +243,7 @@ enum BriefStyle: String, CaseIterable, Sendable {
 
     var detail: String {
         switch self {
-        case .paragraph: return "Your day in a few sentences. Click an underlined phrase for the details."
+        case .paragraph: return "Your day told as a short story. Click an underlined phrase for the details."
         case .points: return "The written brief, then each task and heads-up on its own line."
         }
     }

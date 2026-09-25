@@ -9,7 +9,7 @@ private let FONTS: [(label: String, value: String)] = [
     ("Sans Serif", ""),
     ("Serif", "Georgia"),
     ("Monospace", "Menlo"),
-    ("Rounded", "SF Pro Rounded"),
+    ("Rounded", RichTextController.roundedFamily),
 ]
 
 private let SIZES: [CGFloat] = [12, 14, 16, 18, 20, 24, 30]
@@ -83,6 +83,8 @@ struct NoteEditorView: View {
     @State private var reminderAt = Date()
     @State private var loadedNoteId = ""
     @State private var pendingSave: Task<Void, Never>?
+    /// The formatting toolbar shows every tool rather than one line of them.
+    @AppStorage("fournotes.toolbarExpanded") private var toolbarExpanded = false
     /// This editor's entry in PendingWrites, so quitting writes what's waiting.
     @State private var writeId = UUID()
 
@@ -339,22 +341,13 @@ struct NoteEditorView: View {
 
     private var state: RichTextState { controller.state }
 
-    /// Every formatting tool, always on show. When the editor is too narrow
-    /// for one row the groups wrap onto a second — nothing is tucked behind a
-    /// "More" menu or cut off at the edge.
+    /// The formatting tools, on one line unless the toolbar is expanded. The
+    /// groups run from the most used to the least, so the line holds the
+    /// ones that matter; the toggle at its end shows the rest on lines below
+    /// it, and hides them again. It is only there when they don't all fit.
     private var toolbar: some View {
-        FlowLayout(spacing: 10, alignment: .leading) {
-            group {
-                insertMenu
-                tb("mic", "Dictate") { controller.startDictation() }
-                tb("checklist", "Checklist", active: state.isChecklist) { controller.toggleChecklist() }
-                tb("calendar", "Insert today's date") { controller.insertText(todayString) }
-            }
-            group {
-                tb("undo", "Undo (⌘Z)", enabled: state.canUndo) { controller.undo() }
-                tb("redo", "Redo (⇧⌘Z)", enabled: state.canRedo) { controller.redo() }
-            }
-            group { aiMenu }
+        ToolbarLayout(expanded: toolbarExpanded) {
+            group { insertMenu }
             group {
                 IconMenu("textSize", size: 19, help: "Text style") { textStyleEntries }
                 TextMenu(title: fontLabel, width: 92, help: "Font") { fontEntries }
@@ -365,21 +358,35 @@ struct NoteEditorView: View {
                 tb("italic", "Italic (⌘I)", active: state.italic) { controller.toggleItalic() }
                 tb("underline", "Underline (⌘U)", active: state.underline) { controller.toggleUnderline() }
                 tb("strike", "Strikethrough", active: state.strikethrough) { controller.toggleStrikethrough() }
-                tb("superscript", "Superscript", active: state.superscript) { controller.toggleSuperscript() }
-                tb("subscript", "Subscript", active: state.subscript) { controller.toggleSubscript() }
             }
             group {
                 tb("listBullet", "Bulleted list", active: state.isBulletList) { controller.toggleBulletList() }
                 tb("listOrdered", "Numbered list", active: state.isNumberedList) { controller.toggleNumberedList() }
-                tb("indent", "Indent (Tab)", enabled: state.inList) { controller.shiftDepth(1) }
-                tb("outdent", "Outdent (⇧Tab)", enabled: state.inList) { controller.shiftDepth(-1) }
-                tb("link", "Insert link") { showLinkSheet = true }
+                tb("checklist", "Checklist", active: state.isChecklist) { controller.toggleChecklist() }
             }
+            group { aiMenu }
             group {
                 // Left is lit only once chosen, not on every ordinary paragraph.
                 tb("alignLeft", "Left-align", active: state.alignment == .left) { controller.setAlignment(.left) }
                 tb("alignCenter", "Center-align", active: state.alignment == .center) { controller.setAlignment(.center) }
                 tb("alignRight", "Right-align", active: state.alignment == .right) { controller.setAlignment(.right) }
+            }
+            group {
+                tb("link", "Insert link") { showLinkSheet = true }
+                tb("calendar", "Insert today's date") { controller.insertText(todayString) }
+                tb("mic", "Dictate") { controller.startDictation() }
+            }
+            group {
+                tb("undo", "Undo (⌘Z)", enabled: state.canUndo) { controller.undo() }
+                tb("redo", "Redo (⇧⌘Z)", enabled: state.canRedo) { controller.redo() }
+            }
+            group {
+                tb("indent", "Indent (Tab)", enabled: state.inList) { controller.shiftDepth(1) }
+                tb("outdent", "Outdent (⇧Tab)", enabled: state.inList) { controller.shiftDepth(-1) }
+            }
+            group {
+                tb("superscript", "Superscript", active: state.superscript) { controller.toggleSuperscript() }
+                tb("subscript", "Subscript", active: state.subscript) { controller.toggleSubscript() }
             }
             group {
                 IconMenu("palette", size: 19,
@@ -388,10 +395,19 @@ struct NoteEditorView: View {
                 IconMenu("highlight", size: 19, help: "Highlight") { highlightEntries }
                 tb("eraser", "Clear formatting") { controller.clearFormatting() }
             }
+            // Last: the layout keeps it at the end of the first line.
+            IconButton("chevronDown", size: 16, box: 30,
+                       help: toolbarExpanded ? "Show fewer tools" : "Show all tools") {
+                toolbarExpanded.toggle()
+            }
+            .rotationEffect(.degrees(toolbarExpanded ? 180 : 0))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Tools that don't fit wait past the trailing edge, out of sight.
+        .clipped()
+        .animation(Motion.standard, value: toolbarExpanded)
     }
 
     /// A run of related tools that wraps as one piece.
@@ -824,9 +840,13 @@ struct NoteEditorView: View {
     }
 
     private func share() {
-        guard let window = NSApp.keyValueWindow else { return }
+        guard let window = NSApp.keyValueWindow, let content = window.contentView else { return }
+        // At the pointer, which is on the Share button. Anchored to a zero
+        // rect, the picker opened in the corner of the window instead.
+        let point = content.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
         let picker = NSSharingServicePicker(items: ["\(title)\n\n\(plainBody)"])
-        picker.show(relativeTo: .zero, of: window.contentView ?? NSView(), preferredEdge: .minY)
+        picker.show(relativeTo: NSRect(origin: point, size: .zero).insetBy(dx: -1, dy: -1), of: content,
+                    preferredEdge: content.isFlipped ? .maxY : .minY)
     }
 
     private func duplicate() {
@@ -864,11 +884,18 @@ struct NoteEditorView: View {
 
     private func printNote() {
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 468, height: 648))
+        // Paper is white: the note's text colours are the theme's, and in
+        // the dark theme they printed white.
+        textView.appearance = NSAppearance(named: .aqua)
+        textView.isVerticallyResizable = true
         let body = NSMutableAttributedString(
             string: "\(title)\n\n",
-            attributes: [.font: NSFont.boldSystemFont(ofSize: 20)])
+            attributes: [.font: NSFont.boldSystemFont(ofSize: 20), .foregroundColor: NSColor.labelColor])
         body.append(attributed)
         textView.textStorage?.setAttributedString(body)
+        // Tall enough for all of it, so every page prints, not just the first.
+        if let manager = textView.textLayoutManager { manager.ensureLayout(for: manager.documentRange) }
+        textView.sizeToFit()
         let operation = NSPrintOperation(view: textView)
         operation.printInfo.topMargin = 72
         operation.printInfo.bottomMargin = 72
@@ -975,6 +1002,109 @@ struct NoteEditorView: View {
 private extension NSApplication {
     /// The window to anchor a share sheet on.
     var keyValueWindow: NSWindow? { keyWindow ?? windows.first }
+}
+
+/// The formatting toolbar's arrangement: its groups of tools, then the button
+/// that expands it, as the last subview.
+///
+/// Collapsed, it is one line — the groups that fit, in order, with the button
+/// at the end of the line. Expanded, the rest wrap onto lines below, so the
+/// first line stays as it was. When every group fits on one line there is
+/// nothing to expand, and the button is left out.
+struct ToolbarLayout: Layout {
+    var expanded: Bool
+    var spacing: CGFloat = 10
+    var lineSpacing: CGFloat = 6
+
+    struct Arrangement: Equatable {
+        /// Where each subview goes, in the toolbar's own coordinates.
+        var frames: [CGRect]
+        /// The subviews on show; the others are placed past the trailing edge.
+        var shown: Set<Int>
+        var size: CGSize
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrangement(of: subviews, width: proposal.width ?? .infinity).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let arrangement = arrangement(of: subviews, width: bounds.width)
+        for (subview, frame) in zip(subviews, arrangement.frames) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                          proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func arrangement(of subviews: Subviews, width: CGFloat) -> Arrangement {
+        Self.arrange(subviews.map { $0.sizeThatFits(.unspecified) }, width: width,
+                     expanded: expanded, spacing: spacing, lineSpacing: lineSpacing)
+    }
+
+    /// The arithmetic, apart from SwiftUI. `sizes` are the groups' and then
+    /// the button's.
+    static func arrange(_ sizes: [CGSize], width: CGFloat, expanded: Bool,
+                        spacing: CGFloat, lineSpacing: CGFloat) -> Arrangement {
+        guard let button = sizes.last else { return Arrangement(frames: [], shown: [], size: .zero) }
+        let groups = Array(sizes.dropLast())
+        let oneLine = groups.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(0, groups.count - 1))
+        let fitsOnOneLine = oneLine <= width
+
+        // The lines every group would take expanded. The first leaves room at
+        // its end for the button, when there is a button.
+        var lines: [[Int]] = [[]]
+        var x: CGFloat = 0
+        for (index, size) in groups.enumerated() {
+            let room = lines.count == 1 && !fitsOnOneLine ? width - button.width - spacing : width
+            if !lines[lines.count - 1].isEmpty, x + size.width > room {
+                lines.append([])
+                x = 0
+            }
+            lines[lines.count - 1].append(index)
+            x += size.width + spacing
+        }
+
+        var frames = [CGRect](repeating: .zero, count: sizes.count)
+        var tops: [CGFloat] = []
+        var heights: [CGFloat] = []
+        var y: CGFloat = 0
+        for (number, line) in lines.enumerated() {
+            var height = line.map { groups[$0].height }.max() ?? 0
+            if number == 0 && !fitsOnOneLine { height = max(height, button.height) }
+            var x: CGFloat = 0
+            for index in line {
+                let size = groups[index]
+                frames[index] = CGRect(x: x, y: y + (height - size.height) / 2,
+                                       width: size.width, height: size.height)
+                x += size.width + spacing
+            }
+            tops.append(y)
+            heights.append(height)
+            y += height + lineSpacing
+        }
+
+        let lineCount = fitsOnOneLine || expanded ? lines.count : 1
+        var shown = Set(lines.prefix(lineCount).joined())
+        // Far enough past the trailing edge to be past the pane's too, where
+        // nothing can be clicked, on the line it would take: expanding
+        // slides it in from the side.
+        let offstage = (width.isFinite ? width : oneLine) + 100
+        for index in groups.indices where !shown.contains(index) {
+            frames[index] = frames[index].offsetBy(dx: offstage, dy: 0)
+        }
+        let buttonIndex = sizes.count - 1
+        if fitsOnOneLine {
+            frames[buttonIndex] = CGRect(origin: CGPoint(x: offstage, y: 0), size: button)
+        } else {
+            frames[buttonIndex] = CGRect(origin: CGPoint(x: width - button.width, y: (heights[0] - button.height) / 2),
+                                         size: button)
+            shown.insert(buttonIndex)
+        }
+
+        let height = tops[lineCount - 1] + heights[lineCount - 1]
+        return Arrangement(frames: frames, shown: shown,
+                           size: CGSize(width: fitsOnOneLine ? oneLine : width, height: height))
+    }
 }
 
 /// The field for a new tag. Its own view with its own focus, so it works

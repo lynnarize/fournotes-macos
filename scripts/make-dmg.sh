@@ -3,18 +3,32 @@
 # the app on the left, an Applications shortcut on the right, and a
 # background with an arrow between them.
 #
-#   ./scripts/make-dmg.sh             build Release, then package
-#   ./scripts/make-dmg.sh --no-build  package the Release build already there
+#   ./scripts/make-dmg.sh                    build Release, then package
+#   ./scripts/make-dmg.sh --no-build         package the Release build already there
+#   ./scripts/make-dmg.sh --out DIR          write the image to DIR (default: build)
+#   ./scripts/make-dmg.sh --label 0.2-beta   name it FourNotes-0.2-beta.dmg
 #
-# Output: build/FourNotes-<version>.dmg
+# Output: <out>/FourNotes-<label, or the app's version>.dmg
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 NAME="Four Notes"
 APP="build/dd/Build/Products/Release/FourNotes.app"
 WORK="build/dmg"
+BUILD=1
+OUT_DIR="build"
+LABEL=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --no-build) BUILD=0 ;;
+        --out) OUT_DIR="${2:?--out needs a folder}"; shift ;;
+        --label) LABEL="${2:?--label needs a version}"; shift ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+    shift
+done
 
-if [[ "${1:-}" != "--no-build" ]]; then
+if [[ "$BUILD" == 1 ]]; then
     echo "→ Building Release…"
     xcodegen generate >/dev/null
     xcodebuild -project FourNotes.xcodeproj -scheme FourNotes -configuration Release \
@@ -23,8 +37,9 @@ fi
 [[ -d "$APP" ]] || { echo "No Release build at $APP"; exit 1; }
 
 VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$APP/Contents/Info.plist")
-OUT="build/FourNotes-$VERSION.dmg"
-echo "→ Packaging $NAME $VERSION"
+mkdir -p "$OUT_DIR"
+OUT="$OUT_DIR/FourNotes-${LABEL:-$VERSION}.dmg"
+echo "→ Packaging $NAME ${LABEL:-$VERSION}"
 
 # A volume left mounted by an earlier run would make the new one "Four Notes 1".
 if [[ -d "/Volumes/$NAME" ]]; then hdiutil detach "/Volumes/$NAME" -quiet -force || true; fi

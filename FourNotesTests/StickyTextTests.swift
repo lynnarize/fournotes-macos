@@ -183,4 +183,18 @@ struct StickyTextTests {
         #expect(StickyText.Palette(StickyPaper.of(.blue, dark: true)) == StickyText.Palette(StickyPaper.of(.blue, dark: true)))
         #expect(StickyText.Palette(StickyPaper.of(.blue, dark: true)) != StickyText.Palette(StickyPaper.of(.blue, dark: false)))
     }
+
+    @Test("the toolbar turns a line into a format and back, keeping its indent")
+    func lineFormats() {
+        #expect(StickyText.kind(of: "  • milk").kind == .bullet)
+        #expect(StickyText.kind(of: "## Plan").kind == .heading)
+        #expect(StickyText.kind(of: "3) three").kind == .numbered)
+        #expect(StickyText.kind(of: "☑ done").kind == .checklist)
+        #expect(StickyText.kind(of: "plain").kind == nil)
+        #expect(StickyText.line("  milk", as: .bullet) == "  • milk")
+        #expect(StickyText.line("• milk", as: .checklist) == "☐ milk")
+        #expect(StickyText.line("> said", as: nil) == "said")
+        #expect(StickyText.line("eggs", as: .numbered, number: 4) == "4. eggs")
+        #expect(StickyText.line("## Plan", as: .heading) == "# Plan")
+    }
 }

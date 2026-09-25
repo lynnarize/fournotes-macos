@@ -29,8 +29,6 @@ final class EdgeDock: ObservableObject {
     @Published private(set) var drawerHeight = DockGeometry.drawerMaxHeight
 
     // Sticky notes: see "Sticky notes" below.
-    /// The stuck note open in place of the drawer.
-    @Published private(set) var openSticky: String?
     /// The bubbles are out beside the handle (or on their way in or out).
     @Published private(set) var islandShown = false
     /// 0 inside the handle … 1 split off to their places.
@@ -54,6 +52,11 @@ final class EdgeDock: ObservableObject {
     /// Opening a note that just landed: kept apart from `islandTimer`, which
     /// every movement of the pointer restarts.
     private var landTimer: Task<Void, Never>?
+    /// Narrowing the island back to just its bubbles, once the pointer has
+    /// left them while a note is open (see `rest()`).
+    private var restTimer: Task<Void, Never>?
+    /// The bubbles are on their way back into the handle.
+    private var islandHiding = false
     private var pointerInIsland = false
     private var flight: StickyFlightPanel?
 
@@ -158,6 +161,7 @@ final class EdgeDock: ObservableObject {
     private func layOutHandle() {
         // Only the handle: the island folded away.
         islandGeneration += 1
+        islandHiding = false
         islandShown = false
         islandProgress = 0
         expandedBubble = nil
@@ -174,6 +178,7 @@ final class EdgeDock: ObservableObject {
     private func screensChanged() {
         guard panel?.isVisible == true else { return }
         if isOpen { finishClose() } else { layOutHandle() }
+        restoreIsland()
     }
 
     /// The body in the window's own coordinates (origin top-left, as
@@ -194,6 +199,7 @@ final class EdgeDock: ObservableObject {
         edge = next
         UserDefaults.standard.set(next.rawValue, forKey: Key.edge)
         layOutHandle()
+        restoreIsland()
     }
 
     var screens: [(id: Int, name: String)] {
@@ -206,6 +212,7 @@ final class EdgeDock: ObservableObject {
         if isOpen { finishClose() }
         UserDefaults.standard.set(id, forKey: Key.screen)
         layOutHandle()
+        restoreIsland()
         objectWillChange.send()
     }
 
@@ -265,6 +272,8 @@ final class EdgeDock: ObservableObject {
         let moved = abs(NSEvent.mouseLocation.y - drag.mouseY) > 3
         let fraction = DockGeometry.fraction(of: geometry.screenCenterY, in: visible)
         UserDefaults.standard.set(Double(fraction), forKey: Key.position)
+        // Once the drag has let go of it (a click opens the drawer instead).
+        if moved { DispatchQueue.main.async { [weak self] in self?.restoreIsland() } }
         return moved
     }
 
@@ -280,15 +289,11 @@ final class EdgeDock: ObservableObject {
         isOpen ? close() : open()
     }
 
-    /// Opens the drawer — or, given a stuck note, grows the handle into that
-    /// note instead.
-    func open(sticky id: String? = nil) {
+    func open() {
         guard !isOpen, let panel else { return }
         generation += 1
         let closed = handle
-        let drawer = id == nil
-            ? DockGeometry.drawer(in: visible, edge: edge, centerY: closed.screenCenterY)
-            : StickyGeometry.note(in: visible, edge: edge, centerY: closed.screenCenterY)
+        let drawer = DockGeometry.drawer(in: visible, edge: edge, centerY: closed.screenCenterY)
 
         // Grow the window first, with the handle drawn exactly where it was;
         // then let the shape spring out to the drawer. Resizing the window
@@ -296,8 +301,7 @@ final class EdgeDock: ObservableObject {
         islandTimer?.cancel()
         if islandShown { layOutHandle() }
         geometry = closed.handle(placedIn: drawer.frame)
-        if id == nil { drawerHeight = drawer.bodyHeight }
-        openSticky = id
+        drawerHeight = drawer.bodyHeight
         panel.setFrame(drawer.frame, display: false)
         panel.contentView?.layoutSubtreeIfNeeded()
         panel.displayIfNeeded()
@@ -339,10 +343,10 @@ final class EdgeDock: ObservableObject {
     private func finishClose() {
         stopWatching()
         isOpen = false
-        openSticky = nil
         layOutHandle()
         model?.store.flush()
         releaseKeyboard()
+        restoreIsland()
     }
 
     /// Hands the keyboard back to whatever had it before the dock took it.
@@ -444,28 +448,62 @@ final class EdgeDock: ObservableObject {
 
 // Each stuck note is a bubble that splits off the handle. The pointer on
 // the handle brings them out of its top and bottom, along the edge. On a
-// bubble, it stretches into a pill with the note's title; a click grows the
-// handle into the note, the way a click on the handle grows it into the
-// drawer. Away from the handle and the bubbles, they draw back in.
+// bubble, it stretches into a pill with the note's title; a click pops the
+// note out into its own window beside the edge (see StickyWindow.swift).
+// Away from the handle and the bubbles, they draw back in — unless a note is
+// open: then they stay out, narrowed to just the bubbles, so the note has
+// its bubble to go back into.
 
 extension EdgeDock {
     private var stickyIds: [String] { EdgeStickies.shared.shownIds }
 
-    /// Grows the handle into a stuck note (closing the drawer first).
+    /// Pops a stuck note out of its bubble into its own window (closing the
+    /// drawer, if it's open — the bubbles come back out once it has).
     func openSticky(_ id: String) {
-        guard isOpen else {
-            open(sticky: id)
-            return
+        if isOpen { close() } else { showIsland() }
+        StickyWindows.shared.show(id, from: stickyAnchor(id), edge: edge, visible: visible)
+        // Opened from elsewhere (the menu, a new note): the bubbles rest.
+        if !pointerInIsland { rest() }
+    }
+
+    /// A note is open: its bubble stays out beside the handle.
+    private var stickyPinned: Bool { StickyWindows.shared.hasOpen && !stickyIds.isEmpty }
+
+    /// Not being pointed at while a note is open: just the bubbles, in a
+    /// window only as wide as they are, so it doesn't sit over the note.
+    private var islandResting: Bool { stickyPinned && !pointerInIsland && expandedBubble == nil }
+
+    /// Brings the bubbles back out after something folded them away — the
+    /// drawer, a drag, a move — while a note is open.
+    private func restoreIsland() {
+        if stickyPinned { showIsland() }
+    }
+
+    /// A minimized note just dropped into its bubble: it swells as it
+    /// catches it, and with no note left open, they all go back in.
+    func stickyReturned(_ id: String) {
+        swell(id)
+        guard !stickyPinned else { return }
+        islandTimer?.cancel()
+        islandTimer = after(0.9) { if !self.pointerInIsland { self.hideIsland() } }
+    }
+
+    /// Where a note goes back to on screen: its bubble while they're out,
+    /// otherwise the handle it's tucked into.
+    func stickyAnchor(_ id: String) -> CGPoint {
+        if islandShown, let panel, let index = bubbleIds.firstIndex(of: id) {
+            let frame = panel.frame
+            let bubble = StickyGeometry.bubbleRect(width: frame.width, edge: edge, centerY: bubbleYs[index])
+            return CGPoint(x: frame.minX + bubble.midX, y: frame.maxY - bubble.midY)
         }
-        guard openSticky != id else { return }
-        close()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) { [weak self] in self?.open(sticky: id) }
+        let x = edge == .right ? visible.maxX - DockGeometry.handleWidth / 2 : visible.minX + DockGeometry.handleWidth / 2
+        return CGPoint(x: x, y: handle.screenCenterY)
     }
 
     /// The stuck notes changed — one added, taken off, deleted, or the space
     /// switched.
     func stickiesChanged() {
-        if isOpen, let id = openSticky, !stickyIds.contains(id) { close() }
+        StickyWindows.shared.keep(stickyIds)
         guard islandShown else { return }
         if stickyIds.isEmpty { hideIsland() } else { placeIsland() }
     }
@@ -478,10 +516,14 @@ extension EdgeDock {
         guard let panel else { return }
         let ids = Array(stickyIds.suffix(StickyGeometry.maxBubbles))
         let slots = StickyGeometry.bubbleSlots(count: ids.count, handleY: handle.screenCenterY, in: visible)
-        let window = StickyGeometry.islandWindow(handle: handle.frame, edge: edge, slots: slots)
-        geometry = handle.handle(placedIn: window)
-        bubbleIds = ids
-        bubbleYs = slots.map { window.maxY - $0 }
+        let window = StickyGeometry.islandWindow(handle: handle.frame, edge: edge, slots: slots,
+                                                 wide: !islandResting)
+        let placed = handle.handle(placedIn: window)
+        let ys = slots.map { window.maxY - $0 }
+        // Only what changed: this runs as the pointer moves.
+        if geometry != placed { geometry = placed }
+        if bubbleIds != ids { bubbleIds = ids }
+        if bubbleYs != ys { bubbleYs = ys }
         if let id = expandedBubble, !ids.contains(id) { expandedBubble = nil; expansion = 0 }
         guard panel.frame != window else { return }
         panel.setFrame(window, display: false)
@@ -491,22 +533,32 @@ extension EdgeDock {
 
     /// Splits the bubbles off the handle.
     private func showIsland() {
-        guard !islandShown, !isOpen, drag == nil, !stickyIds.isEmpty, panel != nil else { return }
+        guard !islandShown || islandHiding, !isOpen, drag == nil, !stickyIds.isEmpty, panel != nil else { return }
+        // On their way in: turned round, rather than folded away regardless.
         islandGeneration += 1
+        islandHiding = false
         placeIsland()
         islandShown = true
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.islandShown else { return }
+            guard let self, self.islandShown, !self.islandHiding else { return }
             withAnimation(Motion.reduce ? Motion.instant : .spring(response: 0.55, dampingFraction: 0.68)) {
                 self.islandProgress = 1
             }
         }
     }
 
-    /// Draws a stretched bubble in, then all of them back into the handle.
+    /// Draws a stretched bubble in, then all of them back into the handle —
+    /// or, while a note is open, only narrows them to rest.
     private func hideIsland() {
-        guard islandShown else { return }
+        guard islandShown, !islandHiding else { return }
+        if stickyPinned {
+            rest()
+            return
+        }
+        restTimer?.cancel()
+        restTimer = nil
         islandGeneration += 1
+        islandHiding = true
         let current = islandGeneration
         let reduce = Motion.reduce
         withAnimation(reduce ? Motion.instant : .spring(response: 0.3, dampingFraction: 0.86)) {
@@ -519,6 +571,25 @@ extension EdgeDock {
         DispatchQueue.main.asyncAfter(deadline: .now() + (reduce ? 0 : 0.6)) { [weak self] in
             guard let self, self.islandGeneration == current, !self.isOpen else { return }
             self.layOutHandle()
+        }
+    }
+
+    /// Draws a stretched bubble back in, then narrows the window to just the
+    /// bubbles. Once: the pointer moving about over the note mustn't keep
+    /// putting it off.
+    private func rest() {
+        guard expandedBubble != nil else {
+            // No pill to wait for.
+            restTimer?.cancel()
+            restTimer = nil
+            if islandShown, islandResting { placeIsland() }
+            return
+        }
+        expand(nil)
+        guard restTimer == nil else { return }
+        restTimer = after(0.4) {
+            self.restTimer = nil
+            if self.islandShown, self.islandResting { self.placeIsland() }
         }
     }
 
@@ -572,13 +643,7 @@ extension EdgeDock {
 
     /// The note reached its bubble: it swells as it catches it, and settles.
     private func land(_ id: String) {
-        pulsingBubble = id
-        withAnimation(Motion.reduce ? Motion.instant : .spring(response: 0.22, dampingFraction: 0.45)) {
-            pulse = 1
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) { self?.pulse = 0 }
-        }
+        swell(id)
         islandTimer?.cancel()
         landTimer?.cancel()
         if EdgeStickies.shared.focusOnOpen == id {
@@ -587,6 +652,16 @@ extension EdgeDock {
         } else {
             // Out for a moment so it's plain where it went, then away.
             islandTimer = after(1.6) { if !self.pointerInIsland { self.hideIsland() } }
+        }
+    }
+
+    private func swell(_ id: String) {
+        pulsingBubble = id
+        withAnimation(Motion.reduce ? Motion.instant : .spring(response: 0.22, dampingFraction: 0.45)) {
+            pulse = 1
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) { self?.pulse = 0 }
         }
     }
 
@@ -622,14 +697,22 @@ extension EdgeDock {
             inStrip = strip.contains(p)
         }
         pointerInIsland = onHandle || over != nil || inStrip
+        if islandShown, pointerInIsland {
+            // Resting narrow while a note is open: wide again, for the pills.
+            restTimer?.cancel()
+            restTimer = nil
+            placeIsland()
+        }
 
         islandTimer?.cancel()
-        if !islandShown {
+        if !islandShown || islandHiding {
             if onHandle { islandTimer = after(0.1) { self.showIsland() } }
         } else if let over, over != expandedBubble {
             islandTimer = after(0.08) { self.expand(over) }
         } else if over == nil, expandedBubble != nil, pointerInIsland {
             islandTimer = after(0.25) { self.expand(nil) }
+        } else if !pointerInIsland, stickyPinned {
+            rest()
         } else if !pointerInIsland {
             islandTimer = after(0.3) {
                 guard !self.pointerInIsland else { return }

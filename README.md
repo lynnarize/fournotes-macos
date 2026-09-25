@@ -62,7 +62,9 @@ Four Notes server in between.
   `~/Library/Containers/com.fournotes.mac/Data/Library/Application Support/FourNotes/four-notes-v1.json`
   (Settings → Data & privacy → **Show data file**).
 - API keys are kept in the macOS Keychain, never in that file or a backup.
-- No accounts, analytics, tracking or ads.
+- No accounts, analytics, tracking or ads. Besides a cloud AI model you add
+  yourself, the app only goes online to look up exchange rates (currency codes
+  only) and, when you ask, to check GitHub for a newer release.
 - Settings → Data & privacy exports and restores a backup, and erases
   everything.
 
@@ -105,10 +107,28 @@ The build is ad-hoc signed. On another Mac, open it the first time with
 right-click → **Open** (or System Settings → Privacy & Security → **Open
 Anyway**). A Developer ID signature and notarization remove that step.
 
+## Versions and releases
+
+- **Version** is `MARKETING_VERSION` in `project.yml`.
+- **Build number** is stamped at build time: `CFBundleVersion` becomes the
+  commit count and `FNGitCommit` the short hash (`-dirty` with uncommitted
+  changes). Settings → About shows all three, so any build can be traced to
+  its commit.
+- **Releases** are tagged `v<version>`. One command keeps the app, the tag and
+  the GitHub release in step — it sets the version, commits, builds the disk
+  image from that commit, then asks before tagging, pushing and publishing:
+
+```bash
+./scripts/release.sh 0.1.2
+```
+
+Settings → About → **Check for updates** compares the running version with
+the latest GitHub release.
+
 ## Tests
 
 ```bash
-./run-tests.sh
+./scripts/run-tests.sh
 ```
 
 The suite (Swift Testing) covers money parsing and formatting, dates and
@@ -121,14 +141,14 @@ Optional evaluations run real requests against a model, and are off unless
 switched on:
 
 ```bash
-TEST_RUNNER_FOURNOTES_EVAL_AFM=1 ./run-tests.sh                 # Apple Intelligence
-TEST_RUNNER_FOURNOTES_EVAL_OPENROUTER=<model> ./run-tests.sh    # OpenRouter, key from the Keychain
-TEST_RUNNER_FOURNOTES_EVAL_LOCAL=<model> ./run-tests.sh         # a model server on localhost:1234
-TEST_RUNNER_FOURNOTES_EVAL_LOCALSERVER=1 ./run-tests.sh         # LM Studio / Ollama detection
+TEST_RUNNER_FOURNOTES_EVAL_AFM=1 ./scripts/run-tests.sh                 # Apple Intelligence
+TEST_RUNNER_FOURNOTES_EVAL_OPENROUTER=<model> ./scripts/run-tests.sh    # OpenRouter, key from the Keychain
+TEST_RUNNER_FOURNOTES_EVAL_LOCAL=<model> ./scripts/run-tests.sh         # a model server on localhost:1234
+TEST_RUNNER_FOURNOTES_EVAL_LOCALSERVER=1 ./scripts/run-tests.sh         # LM Studio / Ollama detection
 ```
 
-`smoke-test.swift` drives the running app through the accessibility API
-(`swift smoke-test.swift`, with the app open and the screen unlocked).
+`scripts/smoke-test.swift` drives the running app through the accessibility API
+(`swift scripts/smoke-test.swift`, with the app open and the screen unlocked).
 
 ## Keyboard shortcuts
 
@@ -154,7 +174,7 @@ FourNotes/
   Services/   assistant, background jobs, dictation, local model servers, search
   Store/      the document, saving and loading, attachments
   Views/      Today, Notes, To-Do, Finance, Settings, setup
-FourNotesTests/
-scripts/      installer (make-dmg.sh)
+FourNotesTests/  unit tests (Swift Testing)
+scripts/      installer (make-dmg.sh), release (release.sh), tests (run-tests.sh, smoke-test.swift)
 project.yml   XcodeGen project definition
 ```

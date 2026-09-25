@@ -2,7 +2,7 @@
 # Runs the test suite and prints only what matters.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 # Pick up any newly added source files.
 xcodegen generate --quiet
 xcodebuild test -project FourNotes.xcodeproj -scheme FourNotes \

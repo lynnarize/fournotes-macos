@@ -155,6 +155,63 @@ enum StickyText {
     }
 }
 
+// MARK: - Line formats, for the toolbar
+
+extension StickyText {
+    /// What a line is, by what it starts with in `content`.
+    enum LineKind: Equatable {
+        case heading, bullet, numbered, checklist, quote
+    }
+
+    /// A line's kind (nil for ordinary text), its indent, and the text after
+    /// its marker — all as written in `content`.
+    static func kind(of line: String) -> (kind: LineKind?, indent: Substring, text: Substring) {
+        let indent = line.prefix { $0 == " " || $0 == "\t" }
+        let body = line[indent.endIndex...]
+        let patterns: [(LineKind, Regex<Substring>)] = [
+            (.heading, /^#{1,3}\s+/), (.quote, /^>\s?/), (.bullet, /^[•\-\*]\s+/),
+            (.numbered, /^\d+[.)]\s+/), (.checklist, /^[☐☑]\s*/),
+        ]
+        for (kind, pattern) in patterns {
+            if let match = body.prefixMatch(of: pattern) {
+                return (kind, indent, body[match.range.upperBound...])
+            }
+        }
+        return (nil, indent, body)
+    }
+
+    /// `line` turned into `kind` (number `n` for a numbered one), or back
+    /// into ordinary text when `kind` is nil.
+    static func line(_ line: String, as kind: LineKind?, number n: Int = 1) -> String {
+        let parts = self.kind(of: line)
+        let marker = switch kind {
+        case .heading: "# "
+        case .bullet: "• "
+        case .numbered: "\(n). "
+        case .checklist: "☐ "
+        case .quote: "> "
+        case nil: ""
+        }
+        return String(parts.indent) + marker + parts.text
+    }
+}
+
+/// Lets the sticky's toolbar format the text view's lines, and shows which
+/// format the caret's line has.
+@MainActor
+final class StickyTextController: ObservableObject {
+    @Published fileprivate(set) var current: StickyText.LineKind?
+    fileprivate weak var textView: NSTextView?
+    fileprivate weak var coordinator: StickyTextView.Coordinator?
+
+    /// Turns the selected lines into `kind`, or back into ordinary text when
+    /// they all already are.
+    func toggle(_ kind: StickyText.LineKind) {
+        guard let textView, let coordinator else { return }
+        coordinator.toggle(kind, in: textView)
+    }
+}
+
 /// The sticky's writing surface: an NSTextView over `StickyText`, bound to the
 /// note's plain text.
 struct StickyTextView: NSViewRepresentable {
@@ -163,13 +220,18 @@ struct StickyTextView: NSViewRepresentable {
     @Binding var editing: Bool
     let editable: Bool
     let palette: StickyText.Palette
+    var controller: StickyTextController?
     var onEscape: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = StickyScrollView()
-        scroll.documentView = Self.makeTextView(context.coordinator)
+        let textView = Self.makeTextView(context.coordinator)
+        scroll.documentView = textView
+        controller?.textView = textView
+        controller?.coordinator = context.coordinator
+        textView.textContainerInset = NSSize(width: 0, height: 2)
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = false
         scroll.hasHorizontalScroller = false
@@ -292,6 +354,7 @@ struct StickyTextView: NSViewRepresentable {
                 tidying = false
                 fixTypingAttributes(textView)
             }
+            reportLine(textView)
             let plain = StickyText.plainText(from: storage)
             guard plain != shown else { return }
             shown = plain
@@ -301,6 +364,80 @@ struct StickyTextView: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard !tidying, let textView = notification.object as? NSTextView else { return }
             fixTypingAttributes(textView)
+            reportLine(textView)
+        }
+
+        // MARK: - Formatting lines
+
+        /// The caret's line, as written in `content`.
+        private func plainLine(_ line: NSRange, in storage: NSTextStorage) -> String {
+            let text = (storage.string as NSString).substring(with: line)
+            guard line.length > 0,
+                  let prefix = storage.attribute(StickyText.marker, at: line.location, effectiveRange: nil) as? String
+            else { return text }
+            return prefix + text
+        }
+
+        /// Tells the toolbar what the caret's line is.
+        func reportLine(_ textView: NSTextView) {
+            guard let controller = parent.controller, let storage = textView.textStorage else { return }
+            let string = storage.string as NSString
+            let line = StickyText.lines(in: string, touching: NSRange(location: textView.selectedRange().location, length: 0))
+                .last ?? NSRange(location: 0, length: 0)
+            let kind = StickyText.kind(of: plainLine(line, in: storage)).kind
+            if controller.current != kind { controller.current = kind }
+        }
+
+        func toggle(_ kind: StickyText.LineKind, in textView: NSTextView) {
+            guard textView.isEditable, let storage = textView.textStorage else { return }
+            textView.window?.makeFirstResponder(textView)
+            let string = storage.string as NSString
+            let selection = textView.selectedRange()
+            let lines = StickyText.lines(in: string, touching: selection)
+            guard !lines.isEmpty else { return }
+            // All of them already are: back to ordinary text. Otherwise all become it.
+            let off = lines.allSatisfy { StickyText.kind(of: plainLine($0, in: storage)).kind == kind }
+            // A numbered line carries on from a numbered line above it.
+            var number = 1
+            if kind == .numbered, let first = lines.first, first.location > 0 {
+                let above = StickyText.lines(in: string, touching: NSRange(location: first.location - 1, length: 0)).last
+                if let above, let match = plainLine(above, in: storage)
+                    .trimmingCharacters(in: .whitespaces).prefixMatch(of: /^(\d+)[.)]\s/) {
+                    number = (Int(match.1) ?? 0) + 1
+                }
+            }
+
+            let rewritten: [NSAttributedString] = lines.enumerated().map { i, line in
+                let next = StickyText.line(plainLine(line, in: storage), as: off ? nil : kind, number: number + i)
+                if let (prefix, text) = StickyText.split(next) {
+                    return NSAttributedString(string: String(text),
+                                              attributes: StickyText.attributes(prefix, palette: parent.palette))
+                }
+                return NSAttributedString(string: next, attributes: StickyText.attributes(nil, palette: parent.palette))
+            }
+
+            textView.breakUndoCoalescing()
+            // Last first, so the ranges before it stay put.
+            var delta = 0
+            for (line, replacement) in zip(lines, rewritten).reversed() {
+                guard textView.shouldChangeText(in: line, replacementString: replacement.string) else { continue }
+                storage.replaceCharacters(in: line, with: replacement)
+                textView.didChangeText()
+                delta += replacement.length - line.length
+            }
+            textView.breakUndoCoalescing()
+
+            if lines.count == 1, selection.length == 0 {
+                // The caret stays where it was in the line's own text.
+                let line = lines[0], length = rewritten[0].length
+                let offset = max(0, min(length, selection.location - line.location + (length - line.length)))
+                textView.setSelectedRange(NSRange(location: line.location + offset, length: 0))
+            } else {
+                let start = lines[0].location
+                let end = NSMaxRange(lines[lines.count - 1]) + delta
+                textView.setSelectedRange(NSRange(location: start, length: max(0, end - start)))
+            }
+            reportLine(textView)
         }
 
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {

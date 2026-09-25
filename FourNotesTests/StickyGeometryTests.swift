@@ -57,11 +57,48 @@ struct StickyGeometryTests {
         }
     }
 
-    @Test("the open note grows from the edge and stays on screen")
-    func note() {
-        let n = StickyGeometry.note(in: screen, edge: .right, centerY: screen.maxY - 10)
-        #expect(n.frame.maxX == screen.maxX)
-        #expect(n.screenCenterY + StickyGeometry.noteHeight / 2 + StickyGeometry.noteFillet <= screen.maxY)
+    @Test("resting beside an open note, the island is only as wide as its bubbles, clear of the note")
+    func restingIsland() {
+        let handle = DockGeometry.handle(in: screen, edge: .right, centerY: screen.midY)
+        let slots = StickyGeometry.bubbleSlots(count: 3, handleY: handle.screenCenterY, in: screen)
+        let wide = StickyGeometry.islandWindow(handle: handle.frame, edge: .right, slots: slots)
+        let narrow = StickyGeometry.islandWindow(handle: handle.frame, edge: .right, slots: slots, wide: false)
+        #expect(narrow.maxX == wide.maxX && narrow.height == wide.height && narrow.width < wide.width)
+        #expect(narrow.minX >= screen.maxX - StickyGeometry.edgeGap)
+        for y in slots {
+            let bubble = StickyGeometry.bubbleRect(width: narrow.width, edge: .right, centerY: narrow.maxY - y)
+            #expect(CGRect(origin: .zero, size: narrow.size).contains(bubble))
+        }
+    }
+
+    @Test("an open note sits beside the edge, on screen, clear of one already there")
+    func openWindow() {
+        let anchor = CGPoint(x: screen.maxX - 20, y: screen.maxY - 10)
+        let w = StickyGeometry.window(anchor: anchor, edge: .right, in: screen)
+        let paper = w.insetBy(dx: StickyGeometry.windowMargin, dy: StickyGeometry.windowMargin)
+        #expect(paper.maxX == screen.maxX - StickyGeometry.edgeGap)
+        #expect(paper.maxY <= screen.maxY && paper.minY >= screen.minY)
+        let next = StickyGeometry.window(anchor: anchor, edge: .right, in: screen, avoiding: [w])
+        #expect(next.origin != w.origin)
+        let left = StickyGeometry.window(anchor: anchor, edge: .left, in: screen)
+            .insetBy(dx: StickyGeometry.windowMargin, dy: StickyGeometry.windowMargin)
+        #expect(left.minX == screen.minX + StickyGeometry.edgeGap)
+    }
+
+    @Test("a note let go off screen comes back just far enough to take hold of again")
+    func grabbable() {
+        let paper = CGRect(x: 400, y: 300, width: StickyGeometry.paperWidth, height: StickyGeometry.paperHeight)
+        #expect(StickyGeometry.keepGrabbable(paper, in: screen) == .zero)
+        // Its top under the menu bar: down until the strip is on screen.
+        let high = paper.offsetBy(dx: 0, dy: screen.maxY - paper.maxY + 50)
+        #expect(StickyGeometry.keepGrabbable(high, in: screen).dy == -50)
+        // Nearly all of it past the right edge: back until some of it shows.
+        let right = paper.offsetBy(dx: screen.maxX - paper.minX - 10, dy: 0)
+        let shift = StickyGeometry.keepGrabbable(right, in: screen)
+        #expect(right.offsetBy(dx: shift.dx, dy: 0).minX == screen.maxX - 80)
+        // Below the bottom with only its strip left: stays.
+        let low = paper.offsetBy(dx: 0, dy: screen.minY + 30 - paper.maxY)
+        #expect(StickyGeometry.keepGrabbable(low, in: screen) == .zero)
     }
 
     @Test("placements decode from what was saved, older ones included")
