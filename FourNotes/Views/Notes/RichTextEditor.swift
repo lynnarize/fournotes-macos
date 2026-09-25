@@ -150,7 +150,7 @@ final class RichTextController: ObservableObject {
     /// The family a toolbar choice means: "" is the system font.
     private static func familyName(for choice: String, size: CGFloat) -> String? {
         switch choice {
-        case "": return NSFont.systemFont(ofSize: size).familyName
+        case "": return NoteDocument.sans(size).familyName
         case roundedFamily: return roundedSystemFamily
         default: return choice
         }
@@ -176,7 +176,7 @@ final class RichTextController: ObservableObject {
         editParagraphs { paragraph in
             var change: [NSAttributedString.Key: Any] = [.font: NoteDocument.headingFont(level ?? 0)]
             if level == nil, paragraph.isQuote {
-                change[.paragraphStyle] = NSParagraphStyle.default
+                change[.paragraphStyle] = NoteDocument.bodyParagraphStyle
                 change[.foregroundColor] = NSColor.labelColor
             }
             return change
@@ -194,7 +194,7 @@ final class RichTextController: ObservableObject {
     func toggleQuote() {
         let on = state.isQuote
         editParagraphs { _ in
-            [.paragraphStyle: on ? NSParagraphStyle.default : NoteDocument.quoteParagraphStyle(),
+            [.paragraphStyle: on ? NoteDocument.bodyParagraphStyle : NoteDocument.quoteParagraphStyle(),
              .foregroundColor: on ? NSColor.labelColor : NSColor.secondaryLabelColor]
         }
     }
@@ -214,7 +214,7 @@ final class RichTextController: ObservableObject {
         // Siblings changing kind together stay one list.
         var changed: [ObjectIdentifier: NSTextList] = [:]
         editParagraphs { paragraph in
-            if isOn { return [.paragraphStyle: NSParagraphStyle.default] }
+            if isOn { return [.paragraphStyle: NoteDocument.bodyParagraphStyle] }
             var lists = paragraph.style.textLists
             guard lists.count > 1, let own = lists.last else {
                 return [.paragraphStyle: NoteDocument.listParagraphStyle(list)]
@@ -339,7 +339,7 @@ final class RichTextController: ObservableObject {
                 edited.deleteCharacters(in: cut)
                 let remaining = NSRange(location: range.location,
                                         length: max(0, range.length - cut.length))
-                edited.addAttribute(.paragraphStyle, value: NSParagraphStyle.default, range: remaining)
+                edited.addAttribute(.paragraphStyle, value: NoteDocument.bodyParagraphStyle, range: remaining)
                 changes.append((cut.location + whole.location, cut.length, 0))
             }
         }
@@ -362,7 +362,7 @@ final class RichTextController: ObservableObject {
             let paragraph = (storage.string as NSString).paragraphRange(for: tv.selectedRange())
             tv.typingAttributes[.paragraphStyle] = paragraph.length > 0
                 ? storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil)
-                : NSParagraphStyle.default
+                : NoteDocument.bodyParagraphStyle
         }
         refreshState()
     }
@@ -386,7 +386,7 @@ final class RichTextController: ObservableObject {
         // In front of the box: a plain line goes in above the item.
         if selection.location <= box.location {
             var attributes = NoteDocument.baseAttributes
-            attributes[.paragraphStyle] = NSParagraphStyle.default
+            attributes[.paragraphStyle] = NoteDocument.bodyParagraphStyle
             let line = NSAttributedString(string: "\n", attributes: attributes)
             guard tv.shouldChangeText(in: selection, replacementString: line.string) else { return true }
             storage.replaceCharacters(in: selection, with: line)
@@ -473,7 +473,7 @@ final class RichTextController: ObservableObject {
         if lists.count > 1 {
             shiftDepth(-1)
         } else {
-            editParagraphs { _ in [.paragraphStyle: NSParagraphStyle.default] }
+            editParagraphs { _ in [.paragraphStyle: NoteDocument.bodyParagraphStyle] }
         }
         return true
     }
@@ -893,7 +893,7 @@ final class RichTextController: ObservableObject {
         next.fontSize = font.pointSize
         next.headingLevel = NoteDocument.headingLevel(of: font)
         switch font.familyName {
-        case NSFont.systemFont(ofSize: font.pointSize).familyName: next.fontFamily = ""
+        case NoteDocument.sans(font.pointSize).familyName: next.fontFamily = ""
         case Self.roundedSystemFamily: next.fontFamily = Self.roundedFamily
         default: next.fontFamily = font.familyName ?? ""
         }

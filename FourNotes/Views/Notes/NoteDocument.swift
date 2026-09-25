@@ -115,20 +115,118 @@ final class CheckboxAttachment: NSTextAttachment {
 enum NoteDocument {
     static let bodySize: CGFloat = 16
 
-    static var bodyFont: NSFont { .systemFont(ofSize: bodySize) }
+    /// Open Sans, the web editor's face, so a note reads the same in both
+    /// apps. Bundled in Resources/Fonts (SIL Open Font License, OFL.txt there)
+    /// and loaded through ATSApplicationFontsPath in Info.plist.
+    static let bodyFamily = "Open Sans"
+
+    /// The notes' face at a size and weight, or the system font should the
+    /// bundled one ever be missing.
+    static func sans(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        let descriptor = NSFontDescriptor(fontAttributes: [
+            .family: bodyFamily,
+            // Width 0: the variable font also has condensed instances.
+            .traits: [NSFontDescriptor.TraitKey.weight: weight, NSFontDescriptor.TraitKey.width: 0],
+        ])
+        if let font = NSFont(descriptor: descriptor, size: size), font.familyName == bodyFamily { return font }
+        return .systemFont(ofSize: size, weight: weight)
+    }
+
+    static var bodyFont: NSFont { sans(bodySize) }
+
+    /// Notes saved before Open Sans was the face used the system font for
+    /// ordinary text. That was the default, never a choice, so it becomes the
+    /// new default; bold, italic and size stay as they were.
+    static func usingBodyFont(_ document: NSAttributedString) -> NSAttributedString {
+        let out = NSMutableAttributedString(attributedString: document)
+        let manager = NSFontManager.shared
+        let full = NSRange(location: 0, length: out.length)
+        out.beginEditing()
+        out.enumerateAttribute(.font, in: full, options: []) { value, range, _ in
+            guard let font = value as? NSFont,
+                  font.familyName == NSFont.systemFont(ofSize: font.pointSize).familyName else { return }
+            let weight = (font.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any])?[.weight]
+                as? CGFloat ?? 0
+            var replacement = sans(font.pointSize, weight: NSFont.Weight(weight))
+            if manager.traits(of: font).contains(.italicFontMask) {
+                replacement = manager.convert(replacement, toHaveTrait: .italicFontMask)
+            }
+            out.addAttribute(.font, value: replacement, range: range)
+        }
+        out.endEditing()
+        return out
+    }
 
     static var codeFont: NSFont { .monospacedSystemFont(ofSize: 14, weight: .regular) }
 
     static var baseAttributes: [NSAttributedString.Key: Any] {
-        [.font: bodyFont, .foregroundColor: NSColor.labelColor]
+        [.font: bodyFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: bodyParagraphStyle]
+    }
+
+    // MARK: - Spacing
+
+    // The web editor's rhythm (.fn-editor in globals.css): lines 1.75× the
+    // text size, 0.55em between paragraphs, 0.2em between list items. AppKit's
+    // defaults — about 1.2× and nothing between paragraphs — made the same note
+    // look cramped next to the web app.
+
+    /// Line height as a multiple of the body font's own, so a line is 1.75× the text size.
+    static let lineHeightMultiple: CGFloat = {
+        let natural = bodyFont.ascender - bodyFont.descender + bodyFont.leading
+        return natural > 0 ? (bodySize * 1.75 / natural * 100).rounded() / 100 : 1.5
+    }()
+    static let paragraphGap: CGFloat = (bodySize * 0.55).rounded()
+    static let itemGap: CGFloat = (bodySize * 0.2).rounded()
+
+    /// An ordinary paragraph: what a plain line, a heading and a reset use.
+    static var bodyParagraphStyle: NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineHeightMultiple = lineHeightMultiple
+        style.paragraphSpacing = paragraphGap
+        return style
+    }
+
+    /// The web's spacing, on a note saved before it was used here or read from
+    /// elsewhere. Every paragraph keeps its own style otherwise.
+    static func spaced(_ document: NSAttributedString) -> NSAttributedString {
+        let out = NSMutableAttributedString(attributedString: document)
+        let text = out.string as NSString
+        var paragraphs: [(range: NSRange, isItem: Bool)] = []
+        var location = 0
+        while location < text.length {
+            let range = text.paragraphRange(for: NSRange(location: location, length: 0))
+            guard range.length > 0 else { break }
+            location = NSMaxRange(range)
+            let style = out.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+            let isItem = style?.textLists.isEmpty == false || text.character(at: range.location) == 0xFFFC
+            paragraphs.append((range, isItem))
+        }
+        out.beginEditing()
+        for (index, paragraph) in paragraphs.enumerated() {
+            let current = out.attribute(.paragraphStyle, at: paragraph.range.location, effectiveRange: nil)
+                as? NSParagraphStyle ?? .default
+            let style = (current.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+            // Items sit close together; the last one before other text gets a paragraph's gap.
+            let nextIsItem = index + 1 < paragraphs.count && paragraphs[index + 1].isItem
+            style.lineHeightMultiple = lineHeightMultiple
+            style.paragraphSpacing = paragraph.isItem && nextIsItem ? itemGap : paragraphGap
+            if text.substring(with: paragraph.range).trimmingCharacters(in: .newlines) == dividerGlyphs {
+                out.addAttribute(.kern, value: dividerKern,
+                                 range: NSRange(location: paragraph.range.location, length: (dividerGlyphs as NSString).length))
+            }
+            guard style != current else { continue }
+            out.addAttribute(.paragraphStyle, value: style.copy(), range: paragraph.range)
+        }
+        out.endEditing()
+        return out
     }
 
     /// Heading levels, as the toolbar offers them.
     static func headingFont(_ level: Int) -> NSFont {
         switch level {
-        case 1: return .systemFont(ofSize: 28, weight: .bold)
-        case 2: return .systemFont(ofSize: 22, weight: .bold)
-        case 3: return .systemFont(ofSize: 18, weight: .semibold)
+        case 1: return sans(28, weight: .bold)
+        case 2: return sans(22, weight: .bold)
+        case 3: return sans(18, weight: .semibold)
         default: return bodyFont
         }
     }
@@ -164,7 +262,8 @@ enum NoteDocument {
         style.textLists = lists
         style.headIndent = indentStep * (depth + 1)
         style.firstLineHeadIndent = 4 + indentStep * depth
-        style.paragraphSpacing = 2
+        style.lineHeightMultiple = lineHeightMultiple
+        style.paragraphSpacing = itemGap
         return style
     }
 
@@ -178,7 +277,8 @@ enum NoteDocument {
         let style = NSMutableParagraphStyle()
         style.firstLineHeadIndent = indentStep * CGFloat(depth)
         style.headIndent = 20 + indentStep * CGFloat(depth)
-        style.paragraphSpacing = 2
+        style.lineHeightMultiple = lineHeightMultiple
+        style.paragraphSpacing = itemGap
         return style
     }
 
@@ -190,14 +290,19 @@ enum NoteDocument {
 
     /// A divider. Stored as `---`, which is what the web app writes and reads.
     static let dividerGlyphs = "———"
+    /// Open Sans leaves a gap between em dashes; pulled together they read as one rule.
+    static let dividerKern: CGFloat = -2
 
     static func divider() -> NSAttributedString {
         let style = NSMutableParagraphStyle()
         style.alignment = .center
+        style.lineHeightMultiple = lineHeightMultiple
+        style.paragraphSpacing = paragraphGap
         return NSAttributedString(string: dividerGlyphs, attributes: [
             .font: bodyFont,
             .foregroundColor: NSColor.tertiaryLabelColor,
             .paragraphStyle: style,
+            .kern: dividerKern,
         ])
     }
 
@@ -205,6 +310,8 @@ enum NoteDocument {
         let style = NSMutableParagraphStyle()
         style.headIndent = 16
         style.firstLineHeadIndent = 16
+        style.lineHeightMultiple = lineHeightMultiple
+        style.paragraphSpacing = paragraphGap
         return style
     }
 
@@ -361,6 +468,8 @@ enum NoteDocument {
         guard !text.isEmpty else { return "" }
 
         if let style, let list = style.textLists.last {
+            // A marker left in the text by AppKit's HTML reader is not part of the item.
+            if let match = text.firstMatch(of: /^\t[^\t]{0,8}\t/) { text.removeSubrange(match.range) }
             let pad = String(repeating: "  ", count: min(maxDepth, style.textLists.count - 1))
             if list.markerFormat == .decimal {
                 // What the reader sees: AppKit's own count of this list's items.
@@ -419,7 +528,7 @@ enum NoteDocument {
                 let styled = traits.contains(.boldFontMask) || traits.contains(.italicFontMask)
                 let sized = headingLevel(of: font) == nil && font.pointSize != bodySize
                 // Serif, monospace, a code block: plain text has no way to say so.
-                let family = font.familyName != NSFont.systemFont(ofSize: font.pointSize).familyName
+                let family = font.familyName != bodyFamily
                 if styled || sized || family { found = true; stop.pointee = true; return }
             }
             if let style = attributes[.paragraphStyle] as? NSParagraphStyle,
@@ -454,8 +563,104 @@ enum NoteDocument {
             as? NSAttributedString
     }
 
-    /// Reads a note written by the web app's editor. Used once, when a note has
-    /// HTML but no native archive yet.
+    /// Reads a note written by the web app's editor: its structure from the
+    /// plain text, its inline styling from the HTML.
+    ///
+    /// AppKit's HTML reader can't be trusted with structure. It writes each
+    /// list marker into the text ("\t•\tItem") as well as marking the line as
+    /// a list item, so the editor drew a second bullet; it turns checklists
+    /// into bullets and drops dividers and quotes. The web app's `content`
+    /// carries all of that already ("• ", "1. ", "☐ ", "#", "---", ">", nested
+    /// by indent), and reads back exactly. What it can't carry — bold, italic,
+    /// underline, strikethrough, links — is copied over from the HTML, line
+    /// by line where the text matches.
+    static func attributed(fromHTML html: String, plain: String) -> NSAttributedString {
+        let base = NSMutableAttributedString(attributedString: attributed(fromPlainText: plain))
+        guard let styled = attributed(fromHTML: html) else { return base }
+        overlayInlineStyles(from: styled, onto: base)
+        return base
+    }
+
+    /// Paragraphs of `document` as (range of the visible text, the text).
+    private static func lines(of document: NSAttributedString, skippingMarkers: Bool) -> [(NSRange, String)] {
+        let text = document.string as NSString
+        var out: [(NSRange, String)] = []
+        var location = 0
+        while location < text.length {
+            let paragraph = text.paragraphRange(for: NSRange(location: location, length: 0))
+            guard paragraph.length > 0 else { break }
+            location = NSMaxRange(paragraph)
+            var start = paragraph.location
+            var end = NSMaxRange(paragraph)
+            while end > start, let scalar = UnicodeScalar(text.character(at: end - 1)),
+                  CharacterSet.whitespacesAndNewlines.contains(scalar) { end -= 1 }
+            if skippingMarkers {
+                // The HTML reader's marker: "\t•\t", "\t1\t", "\t◦\t" at the head of a list item.
+                let head = text.substring(with: NSRange(location: start, length: end - start))
+                if let match = head.firstMatch(of: /^\t[^\t]{0,8}\t/) {
+                    start += (String(head[match.range]) as NSString).length
+                }
+            } else if end > start, text.character(at: start) == 0xFFFC {
+                // A checkbox attachment and the space after it.
+                start += 1
+                if end > start, text.character(at: start) == 0x20 { start += 1 }
+            }
+            let range = NSRange(location: start, length: max(0, end - start))
+            out.append((range, text.substring(with: range).replacingOccurrences(of: "\u{00A0}", with: " ")))
+        }
+        return out
+    }
+
+    private static func overlayInlineStyles(from styled: NSAttributedString, onto base: NSMutableAttributedString) {
+        let manager = NSFontManager.shared
+        let sources = lines(of: styled, skippingMarkers: true)
+        var next = 0
+        for (target, text) in lines(of: base, skippingMarkers: false) where !text.isEmpty {
+            // Lines come in the same order; allow a few the HTML reader added or dropped.
+            guard let found = sources[next...].prefix(8).firstIndex(where: { $0.1 == text }) else { continue }
+            let source = sources[found].0
+            next = found + 1
+            styled.enumerateAttributes(in: source, options: []) { attributes, run, _ in
+                let range = NSRange(location: target.location + run.location - source.location, length: run.length)
+                if let font = attributes[.font] as? NSFont {
+                    let traits = manager.traits(of: font)
+                    for trait in [NSFontTraitMask.boldFontMask, .italicFontMask] where traits.contains(trait) {
+                        base.enumerateAttribute(.font, in: range, options: []) { value, sub, _ in
+                            let current = value as? NSFont ?? bodyFont
+                            base.addAttribute(.font, value: manager.convert(current, toHaveTrait: trait), range: sub)
+                        }
+                    }
+                }
+                for key in [NSAttributedString.Key.underlineStyle, .strikethroughStyle, .link] {
+                    if let value = attributes[key] { base.addAttribute(key, value: value, range: range) }
+                }
+            }
+        }
+    }
+
+    /// Removes list markers written into the text of a list item ("\t•\t"),
+    /// which AppKit's HTML reader leaves behind. Notes opened from the web app
+    /// before that was handled were saved with them and showed two bullets.
+    static func removingLiteralListMarkers(_ document: NSAttributedString) -> NSAttributedString {
+        let out = NSMutableAttributedString(attributedString: document)
+        let text = out.string as NSString
+        var cuts: [NSRange] = []
+        var location = 0
+        while location < text.length {
+            let paragraph = text.paragraphRange(for: NSRange(location: location, length: 0))
+            guard paragraph.length > 0 else { break }
+            location = NSMaxRange(paragraph)
+            let style = out.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle
+            guard style?.textLists.isEmpty == false,
+                  let match = text.substring(with: paragraph).firstMatch(of: /^\t[^\t\n]{0,8}\t/) else { continue }
+            cuts.append(NSRange(location: paragraph.location, length: (String(match.output) as NSString).length))
+        }
+        for cut in cuts.reversed() { out.deleteCharacters(in: cut) }
+        return out
+    }
+
+    /// AppKit's reading of the web editor's HTML, with web fonts swapped for
+    /// the system font. Only for inline styling; see above.
     static func attributed(fromHTML html: String) -> NSAttributedString? {
         guard let data = html.data(using: .utf8) else { return nil }
         let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
@@ -482,7 +687,7 @@ enum NoteDocument {
             }
             let size = (font.pointSize * scale).rounded()
             let traits = manager.traits(of: font)
-            var replacement = NSFont.systemFont(ofSize: size)
+            var replacement = sans(size)
             if traits.contains(.boldFontMask) {
                 replacement = manager.convert(replacement, toHaveTrait: .boldFontMask)
             }

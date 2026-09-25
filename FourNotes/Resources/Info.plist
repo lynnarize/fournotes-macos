@@ -29,6 +29,8 @@
 			</array>
 		</dict>
 	</array>
+	<key>ATSApplicationFontsPath</key>
+	<string>.</string>
 	<key>FNGoogleClientID</key>
 	<string>$(GOOGLE_CLIENT_ID)</string>
 	<key>CFBundleVersion</key>

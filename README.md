@@ -202,3 +202,9 @@ FourNotesTests/  unit tests (Swift Testing)
 scripts/      installer (make-dmg.sh), release (release.sh), tests (run-tests.sh, smoke-test.swift)
 project.yml   XcodeGen project definition
 ```
+
+## Credits
+
+Notes are set in [Open Sans](https://github.com/googlefonts/opensans), the same
+face as the web app, bundled in `FourNotes/Resources/Fonts` under the SIL Open
+Font License 1.1 (`OFL.txt` beside it, and inside the built app).

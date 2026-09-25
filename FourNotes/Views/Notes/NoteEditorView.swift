@@ -82,6 +82,9 @@ struct NoteEditorView: View {
     @State private var showReminderPicker = false
     @State private var reminderAt = Date()
     @State private var loadedNoteId = ""
+    /// The web editor's HTML the open document was built from, to notice a
+    /// formatting-only change arriving from the web app.
+    @State private var loadedHTML: String?
     @State private var pendingSave: Task<Void, Never>?
     /// The formatting toolbar shows every tool rather than one line of them.
     @AppStorage("fournotes.toolbarExpanded") private var toolbarExpanded = false
@@ -118,6 +121,7 @@ struct NoteEditorView: View {
         }
         .onAppear(perform: load)
         .onChange(of: note.id) { _, _ in load() }
+        .onChange(of: note.updatedAt) { _, _ in reloadIfChangedElsewhere() }
         .sheet(isPresented: $showLinkSheet) { linkSheet }
     }
 
@@ -128,17 +132,45 @@ struct NoteEditorView: View {
         loadedNoteId = note.id
         title = note.title
         attributed = Self.document(for: note)
+        loadedHTML = note.html
         suggestion = nil
         tagDraft = nil
+    }
+
+    /// Sync, the assistant or the edge dock changed the open note. The editor
+    /// used to go on showing what it first loaded — and the next keystroke
+    /// saved that over the newer version. Edits still waiting to be saved win:
+    /// they are newer than anything that has arrived.
+    private func reloadIfChangedElsewhere() {
+        guard loadedNoteId == note.id, !saving else { return }
+        if title != note.title { title = note.title }
+        let textChanged = NoteDocument.plainText(from: attributed) != note.content
+        // This editor clears the HTML when it saves, so HTML that differs from
+        // what was loaded was written by the web app.
+        let formattingChanged = note.html != nil && note.html != loadedHTML
+        guard textChanged || formattingChanged else { return }
+        attributed = Self.document(for: note)
+        loadedHTML = note.html
     }
 
     /// The note as something editable. A note this app has opened before has
     /// its own representation; one from the web app has HTML; anything else is
     /// rebuilt from the plain text, which carries the structure.
     static func document(for note: Note) -> NSAttributedString {
-        if let data = note.richText, let restored = NoteDocument.unarchive(data) { return restored }
-        if let html = note.html, !html.isEmpty,
-           let imported = NoteDocument.attributed(fromHTML: html) { return imported }
+        NoteDocument.spaced(NoteDocument.usingBodyFont(unspacedDocument(for: note)))
+    }
+
+    private static func unspacedDocument(for note: Note) -> NSAttributedString {
+        if let data = note.richText, let restored = NoteDocument.unarchive(data) {
+            return NoteDocument.removingLiteralListMarkers(restored)
+        }
+        if let html = note.html, !html.isEmpty {
+            // The web app writes both forms; an HTML-only note is read as best AppKit can.
+            if note.content.isEmpty, let imported = NoteDocument.attributed(fromHTML: html) {
+                return NoteDocument.removingLiteralListMarkers(imported)
+            }
+            return NoteDocument.attributed(fromHTML: html, plain: note.content)
+        }
         return NoteDocument.attributed(fromPlainText: note.content)
     }
 
