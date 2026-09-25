@@ -72,7 +72,7 @@ struct EditorUndoTests {
 
         /// The next SwiftUI update must take the editor's own text as current,
         /// not push the binding back in over it.
-        var inStep: Bool { coordinator.appliedRevision == controller.revision }
+        var inStep: Bool { coordinator.knows(saved.bound) }
     }
 
     @Test("typing is saved")
@@ -91,12 +91,10 @@ struct EditorUndoTests {
         h.type(["!", "?"])
         #expect(h.saved.last == "Hi!?")
 
-        let before = h.controller.revision
         h.menu("undo:")
         #expect(h.shown == "Hi!")
         #expect(h.saved.last == "Hi!")
         #expect(h.bound == "Hi!")
-        #expect(h.controller.revision > before)
         #expect(h.inStep)
 
         h.menu("undo:")

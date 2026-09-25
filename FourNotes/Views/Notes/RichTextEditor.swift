@@ -8,9 +8,11 @@ import SwiftUI
 //
 //   - Every mutation goes through shouldChangeText/didChangeText, so undo
 //     stays in step with the document.
-//   - SwiftUI only pushes text in when it is genuinely newer, tracked with a
-//     revision counter rather than a flag cleared on an unordered async hop —
-//     which used to overwrite the character the user had just typed.
+//   - SwiftUI only pushes text in when it came from outside the editor — a
+//     note being opened — never the editor's own text coming back to it.
+//     Comparing contents instead overwrote what AppKit holds without saying
+//     so: the character just typed, an inline prediction, characters
+//     half-typed with an input method.
 
 /// What the toolbar needs to know about the current selection.
 struct RichTextState: Equatable {
@@ -41,9 +43,6 @@ struct RichTextState: Equatable {
 final class RichTextController: ObservableObject {
     @Published var state = RichTextState()
     fileprivate weak var textView: NSTextView?
-    /// Bumped on every local edit. SwiftUI compares against it before pushing
-    /// text in, so a pending update can never clobber newer typing.
-    fileprivate(set) var revision = 0
 
     func focus() { textView?.window?.makeFirstResponder(textView) }
     func undo() { textView?.undoManager?.undo(); refreshState() }
@@ -68,6 +67,7 @@ final class RichTextController: ObservableObject {
 
     /// Replaces `range` (or the whole note) with plain text, as one undo step.
     func replace(_ range: NSRange?, withPlainText text: String) {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return }
         let target = range.flatMap { NSMaxRange($0) <= storage.length ? $0 : nil }
             ?? NSRange(location: 0, length: storage.length)
@@ -81,6 +81,7 @@ final class RichTextController: ObservableObject {
 
     /// Adds plain text as new paragraphs after `range` (or at the end).
     func insertBelow(_ range: NSRange?, plainText text: String) {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return }
         let string = storage.string as NSString
         var at = storage.length
@@ -244,6 +245,7 @@ final class RichTextController: ObservableObject {
     /// Nests list items one level deeper — or, with `-1`, brings them back out.
     /// Checklist items move by indent, since their checkbox is not a marker.
     func shiftDepth(_ delta: Int) {
+        settleMarkedText()
         guard let storage = textView?.textStorage else { return }
         guard state.inList else { return }
         // Siblings indented together join one nested list rather than each
@@ -294,6 +296,7 @@ final class RichTextController: ObservableObject {
     /// Checkboxes are attachments rather than list markers, because a marker
     /// cannot be clicked.
     func toggleChecklist() {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return }
         let paragraphs = paragraphRanges()
         guard let first = paragraphs.first, let last = paragraphs.last else { return }
@@ -369,6 +372,7 @@ final class RichTextController: ObservableObject {
     /// in it ends the checklist instead. False when the caret is not in a
     /// checklist item, for an ordinary newline.
     func insertNewlineInChecklist() -> Bool {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return false }
         let selection = tv.selectedRange()
         let text = storage.string as NSString
@@ -443,6 +447,7 @@ final class RichTextController: ObservableObject {
     /// leaves the text as a plain line, rather than joining it to the line
     /// above. False anywhere else, for an ordinary backspace.
     func deleteMarkerBeforeCaret() -> Bool {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return false }
         let selection = tv.selectedRange()
         guard selection.length == 0 else { return false }
@@ -474,6 +479,7 @@ final class RichTextController: ObservableObject {
     }
 
     func toggleCheckbox(at index: Int) {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage, index < storage.length,
               let box = storage.attribute(.attachment, at: index, effectiveRange: nil)
                   as? CheckboxAttachment else { return }
@@ -487,6 +493,7 @@ final class RichTextController: ObservableObject {
     }
 
     func insertDivider() {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return }
         let range = tv.selectedRange()
         let string = storage.string as NSString
@@ -519,6 +526,7 @@ final class RichTextController: ObservableObject {
     /// Links the selected text — keeping its formatting — or, with nothing
     /// selected, puts `title` in as a link.
     func insertLink(_ url: String, title: String) {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage, let link = Self.linkURL(url) else { return }
         let range = tv.selectedRange()
         let look: [NSAttributedString.Key: Any] = [
@@ -551,6 +559,7 @@ final class RichTextController: ObservableObject {
     /// checklist's boxes stay. Setting plain attributes over a checkbox used
     /// to strip it to a bare "￼" character.
     func clearFormatting() {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return }
         let range = effectiveRange()
         let text = storage.string as NSString
@@ -645,6 +654,17 @@ final class RichTextController: ObservableObject {
 
     // MARK: - Editing primitives
 
+    /// Settles text still being composed before an edit: an inline
+    /// prediction is turned down, characters half-typed with an input method
+    /// are kept. Every edit works out its ranges after this, from the text as
+    /// it then is — clearing a prediction shortens the text, and a range
+    /// worked out beforehand could run past its end.
+    private func settleMarkedText() {
+        guard let tv = textView, tv.hasMarkedText() else { return }
+        NSSpellChecker.shared.dismissCorrectionIndicator(for: tv)
+        if tv.hasMarkedText() { tv.unmarkText() }
+    }
+
     /// A paragraph as a paragraph-level change sees it.
     private struct Paragraph {
         /// Its first character's attributes — or, on the empty last line,
@@ -667,6 +687,7 @@ final class RichTextController: ObservableObject {
     /// said "no list", and a second click put the list on again instead of
     /// taking it off.
     private func editParagraphs(_ change: (Paragraph) -> [NSAttributedString.Key: Any]) {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return }
         let text = storage.string as NSString
         let selection = tv.selectedRange()
@@ -742,6 +763,7 @@ final class RichTextController: ObservableObject {
     /// Puts text in at the caret in the style being typed — a date inserted
     /// into a heading is heading-sized.
     private func insert(_ text: String) {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return }
         let range = tv.selectedRange()
         let attributes = typingAttributes(of: tv)
@@ -754,6 +776,7 @@ final class RichTextController: ObservableObject {
     }
 
     private func toggleTrait(_ trait: NSFontTraitMask) {
+        settleMarkedText()
         let manager = NSFontManager.shared
         let isOn = currentFont().map { manager.traits(of: $0).contains(trait) } ?? false
         mutateFonts { font, manager in
@@ -762,6 +785,7 @@ final class RichTextController: ObservableObject {
     }
 
     private func mutateFonts(_ transform: (NSFont, NSFontManager) -> NSFont) {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return }
         let manager = NSFontManager.shared
 
@@ -786,6 +810,7 @@ final class RichTextController: ObservableObject {
     }
 
     private func apply(_ key: NSAttributedString.Key, _ value: Any) {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return }
         if tv.selectedRange().length == 0 {
             tv.typingAttributes[key] = value
@@ -802,6 +827,7 @@ final class RichTextController: ObservableObject {
     }
 
     private func remove(_ key: NSAttributedString.Key) {
+        settleMarkedText()
         guard let tv = textView, let storage = tv.textStorage else { return }
         tv.typingAttributes[key] = nil
         let range = tv.selectedRange()
@@ -818,6 +844,7 @@ final class RichTextController: ObservableObject {
 
     private func toggleAttribute(_ key: NSAttributedString.Key, on value: Any,
                                  isOn: (Any?) -> Bool) {
+        settleMarkedText()
         guard let tv = textView else { return }
         let range = tv.selectedRange()
         let current = range.length > 0
@@ -1091,7 +1118,7 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.textContainer?.widthTracksTextView = true
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.textStorage?.setAttributedString(text)
+        coordinator.adopt(text, into: textView)
         coordinator.watchUndo(of: textView)
         controller.attach(textView)
         return textView
@@ -1100,19 +1127,7 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let document = scroll.documentView as? NoteDocumentView else { return }
         let textView = document.textView
-        // Only adopt text that did not come from this editor. The revision
-        // counter is set when the local edit happens, so a SwiftUI update that
-        // arrives late cannot overwrite newer typing.
-        if context.coordinator.appliedRevision != controller.revision {
-            context.coordinator.appliedRevision = controller.revision
-        } else if textView.attributedString() != attributed {
-            let selected = textView.selectedRange()
-            textView.textStorage?.setAttributedString(attributed)
-            // NSRange counts UTF-16 units; String.count counts characters, and
-            // the two differ as soon as a note contains an emoji.
-            let limit = (textView.string as NSString).length
-            textView.setSelectedRange(NSRange(location: min(selected.location, limit), length: 0))
-        }
+        context.coordinator.adopt(attributed, into: textView)
         // `textColor` is deliberately not assigned: its setter recolours the
         // whole document, which wiped every custom colour on every update.
         textView.insertionPointColor = NSColor(context.environment.palette.text)
@@ -1131,7 +1146,10 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         private let parent: RichTextEditor
-        var appliedRevision = 0
+        /// The texts this editor has handed to SwiftUI, or taken from it.
+        /// Whatever SwiftUI passes back that is one of these is already in
+        /// the text view, however late it arrives.
+        private let known = NSHashTable<NSAttributedString>(options: [.weakMemory, .objectPointerPersonality])
         /// Set when an undo or redo has changed the text and not yet been told.
         private var undoneUnsaved = false
         nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
@@ -1174,6 +1192,32 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
             }
         }
 
+        /// Puts text from outside the editor — the note, as it is opened —
+        /// into the text view, and nothing else.
+        ///
+        /// This used to compare contents, and overwrite the text view with
+        /// the binding whenever they differed. An inline prediction is text
+        /// in the view the binding never hears of, so the next SwiftUI update
+        /// replaced it; AppKit, clearing the prediction afterwards at a range
+        /// that was gone, threw — up through SwiftUI's update, which left the
+        /// window frozen until the app was quit, and crashed it then.
+        func adopt(_ text: NSAttributedString, into textView: NSTextView) {
+            guard !known.contains(text) else { return }
+            known.add(text)
+            guard let storage = textView.textStorage, !storage.isEqual(to: text) else { return }
+            // Text still being composed goes first, while its range is still
+            // the text's.
+            if textView.hasMarkedText() { textView.unmarkText() }
+            let selected = textView.selectedRange()
+            storage.setAttributedString(text)
+            // NSRange counts UTF-16 units; String.count counts characters, and
+            // the two differ as soon as a note contains an emoji.
+            textView.setSelectedRange(NSRange(location: min(selected.location, storage.length), length: 0))
+        }
+
+        /// Whether SwiftUI passing `text` back would leave the text view alone.
+        func knows(_ text: NSAttributedString) -> Bool { known.contains(text) }
+
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             publish(textView)
@@ -1184,8 +1228,7 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
             guard let storage = textView.textStorage else { return }
             undoneUnsaved = false
             let copy = NSAttributedString(attributedString: storage)
-            parent.controller.revision += 1
-            appliedRevision = parent.controller.revision
+            known.add(copy)
             parent.attributed = copy
             parent.onTextChange(copy)
             parent.controller.refreshState()
