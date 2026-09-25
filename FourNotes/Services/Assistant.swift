@@ -183,7 +183,9 @@ final class Assistant: ObservableObject {
             // Answered here, but a bigger model knows more of the world:
             // recommendations, ideas, a question about a note, or one the
             // local model said was beyond it.
+            // Not for something the cloud would refuse outright.
             if let cloud = engine.cloudOffer, response.answeredBy != .cloud, !response.refused, result.created.isEmpty,
+               Guard.blockedReply(clean, tier: .cloud) == nil,
                Intent.needsCloud(clean, localReply: response.reply, aboutNote: about != nil) {
                 reply.cloudOffer = CloudOffer(questionId: question.id, name: cloud)
             }

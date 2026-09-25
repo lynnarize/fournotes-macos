@@ -44,10 +44,11 @@ Settings → AI & API keys has two groups, and you choose which is asked first.
 | **On this Mac** | Apple Intelligence, or a model in LM Studio or Ollama | Found automatically — **Use**, **Start**, **Stop** |
 | **In the cloud** | One tab each, as in the web app: **OpenRouter** (Free: tested free models · Paid: any model, billed to your credits), **OpenCode** (Free: Zen's free models · Go: the subscription), **Claude**, and **Other** (OpenAI, Groq, Google Gemini, or any OpenAI-compatible API) | Your key and a model per tab; **Ask this first** picks which answers first |
 
-The assistant helps with general questions, advice and short writing, but it
-doesn't write code and won't help with anything that could cause harm — the
-same limits as a web user's own key. Those requests are refused on the Mac,
-before any model is asked.
+The assistant helps with general questions, advice and writing, but it doesn't
+write code and won't help with anything that could cause harm, whichever model
+answers. Cloud replies, billed to your key, are kept to a sensible length; a
+model on this Mac costs nothing to run, so it may answer at length. Refused
+requests are turned away on the Mac, before any model is asked.
 
 - **This Mac first** (the default) keeps answers on your Mac. When a question
   needs the internet, the reply offers to ask the cloud model — nothing is sent

@@ -213,7 +213,7 @@ struct AnthropicClient {
              "cache_control": ["type": "ephemeral"]],
             ["type": "text", "text": Prompts.dynamicContext(ctx) + "\n\n"
                 + Prompts.identity(model: model, provider: "your own Anthropic API key")
-                + (chat ? "\n\n" + Guard.scopeInstructions : "")],
+                + (chat ? "\n\n" + Guard.scopeInstructions(.cloud) : "")],
         ]
     }
 

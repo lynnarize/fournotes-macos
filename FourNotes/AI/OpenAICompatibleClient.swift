@@ -87,7 +87,8 @@ struct OpenAICompatibleClient {
     }
 
     private func converse(_ history: [ChatMessage], ctx: ClientContext, tools: Bool) async throws -> ChatResponse {
-        let base: [[String: Any]] = [["role": "system", "content": system(ctx) + "\n\n" + Guard.scopeInstructions]]
+        let base: [[String: Any]] = [["role": "system", "content": system(ctx) + "\n\n"
+                                         + Guard.scopeInstructions(runsOnThisMac ? .local : .cloud)]]
             + history.suffix(20).map { ["role": $0.role.rawValue, "content": $0.content] }
 
         var out = try await chatLoop(base, firstChoice: tools ? "auto" : nil)

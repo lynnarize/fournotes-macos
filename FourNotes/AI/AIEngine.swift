@@ -293,8 +293,11 @@ final class AIEngine: ObservableObject {
     private func chat(_ messages: [ChatMessage], context: ClientContext,
                       using list: [Answerer], tools: Bool = true) async throws -> ChatResponse {
         let messages = Guard.trim(messages)
-        // Code and harm are refused before any model is asked (see Guard).
-        if let last = messages.last, last.role == .user, let refusal = Guard.blockedReply(last.content) {
+        // Refused before any model is asked (see Guard). The first model's
+        // rules apply: a cloud model that fails may hand over to this Mac, but
+        // "This Mac first" never hands over to the cloud.
+        let tier: Guard.Tier = list.first?.isLocal == true ? .local : .cloud
+        if let last = messages.last, last.role == .user, let refusal = Guard.blockedReply(last.content, tier: tier) {
             var response = ChatResponse(reply: refusal, actions: [])
             response.answeredBy = .onDevice
             response.answererName = "Four Notes"
@@ -327,8 +330,8 @@ final class AIEngine: ObservableObject {
                     response.answeredBy = .cloud
                 }
                 response.answererName = answerer.shortName
-                // Whatever the model wrote, code and overlong answers aren't shown.
-                let shown = Guard.enforce(response.reply)
+                // Whatever a cloud model wrote, code and overlong answers aren't shown.
+                let shown = Guard.enforce(response.reply, tier: answerer.isLocal ? .local : .cloud)
                 if shown != response.reply {
                     response.reply = shown
                     response.refused = true
