@@ -122,7 +122,8 @@ struct NoteEditorView: View {
         .onAppear(perform: load)
         .onChange(of: note.id) { _, _ in load() }
         .onChange(of: note.updatedAt) { _, _ in reloadIfChangedElsewhere() }
-        .sheet(isPresented: $showLinkSheet) { linkSheet }
+        .fnSheet(isPresented: $showLinkSheet) { linkSheet }
+        .fnSheet(isPresented: $showReminderPicker) { reminderPicker }
     }
 
     // MARK: - Loading and saving
@@ -735,9 +736,6 @@ struct NoteEditorView: View {
                         },
                     ]
                 }
-                .popover(isPresented: $showReminderPicker, arrowEdge: .top) { reminderPicker }
-
-                Spacer(minLength: 8)
 
                 HStack(spacing: 5) {
                     if wordCount > 0 {
@@ -757,10 +755,13 @@ struct NoteEditorView: View {
                 .lineLimit(1)
                 .fixedSize()
                 .animation(Motion.standard, value: saving)
+
+                // The right end is the assistant's: its "Ask Four Notes" pill
+                // sits over this corner, as wide as whatever it is saying, and
+                // covered the save status when that was on this side.
+                Spacer(minLength: 0)
             }
-            .padding(.leading, 30)
-            // Clear of the assistant's round button, which sits over this corner.
-            .padding(.trailing, 100)
+            .padding(.horizontal, 30)
             .padding(.vertical, 7)
         }
     }
@@ -832,8 +833,8 @@ struct NoteEditorView: View {
     }
 
     private var reminderPicker: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Remind me about this note").font(FN.bodyMedium).foregroundStyle(p.text)
+        SheetFrame(title: "Remind me about this note", width: 340) {
+        VStack(alignment: .leading, spacing: 12) {
             DatePicker("", selection: $reminderAt, in: Date()..., displayedComponents: [.date, .hourAndMinute])
                 .labelsHidden()
                 .datePickerStyle(.compact)
@@ -846,8 +847,7 @@ struct NoteEditorView: View {
                 }
             }
         }
-        .padding(14)
-        .frame(width: 280)
+        }
     }
 
     // MARK: - Actions
@@ -882,7 +882,9 @@ struct NoteEditorView: View {
     }
 
     private func duplicate() {
-        pendingSave?.cancel()
+        // This note's last keystrokes first. Cancelled instead, they waited
+        // in PendingWrites, and went in over anything typed in it later.
+        if saving { commit(attributed) }
         let plain = NoteDocument.plainText(from: attributed)
         let richText = NoteDocument.hasInlineFormatting(attributed)
             ? NoteDocument.archive(attributed) : nil

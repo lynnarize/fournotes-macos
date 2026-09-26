@@ -155,6 +155,36 @@ struct EditorUndoTests {
         #expect(h.inStep)
     }
 
+    @Test("ticking a box undoes, and the unticked box is saved")
+    func checkboxUndo() throws {
+        let h = try Harness("☐ Milk")
+        h.undo.beginUndoGrouping()
+        h.controller.toggleCheckbox(at: 0)
+        h.undo.endUndoGrouping()
+        #expect(h.saved.last == "☑ Milk")
+        // The box was changed in place, so undo put back the same, ticked, box.
+        h.controller.undo()
+        #expect(h.shown == "☐ Milk")
+        #expect(h.saved.last == "☐ Milk")
+        h.controller.redo()
+        #expect(h.shown == "☑ Milk")
+        #expect(h.saved.last == "☑ Milk")
+    }
+
+    @Test("a note replaced from elsewhere has nothing to undo")
+    func undoAfterReplacement() throws {
+        let h = try Harness("A first line that is long")
+        h.textView.setSelectedRange(NSRange(location: h.textView.textStorage!.length, length: 0))
+        h.type(["!", "!"])
+        // Sync brings a shorter version in. The steps typed before are ranges
+        // past its end: undoing one threw NSRangeException.
+        let incoming = NoteDocument.attributed(fromPlainText: "Hi")
+        h.coordinator.adopt(incoming, into: h.textView)
+        #expect(!h.undo.canUndo)
+        h.menu("undo:")
+        #expect(h.shown == "Hi")
+    }
+
     @Test("each undo saves once")
     func savesOnce() throws {
         let h = try Harness("")

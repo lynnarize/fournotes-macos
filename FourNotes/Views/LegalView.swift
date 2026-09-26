@@ -15,7 +15,7 @@ enum LegalDocument: String, Identifiable, CaseIterable {
     var id: String { rawValue }
 
     static let contact = "lynnarize@gmail.com"
-    static let lastUpdated = "September 25, 2026"
+    static let lastUpdated = "September 26, 2026"
 
     var title: String { self == .privacy ? "Privacy Policy" : "Terms of Service" }
 
@@ -69,7 +69,7 @@ enum LegalDocument: String, Identifiable, CaseIterable {
         .list([
             "**Sync with Google Drive** (only if you connect it in Settings → Sync) — you sign in with Google on Google’s own page, and the app asks only to see your email address and name and to use its own private folder in your Drive. Your notes, to-dos, transactions, sticky notes and main settings are kept there as one file, which you can’t see among your files and no one else can read; the Four Notes web app reads the same file when you sign in there. Scanned images, sample data, API keys and Mac-only preferences are not synced. The sign-in is kept in the macOS Keychain. *Disconnect* in Settings → Sync signs this Mac out and can delete the copy in Drive. See [Google’s privacy policy](https://policies.google.com/privacy).",
             "**Exchange rates** — for a transaction in another currency, the app asks [Frankfurter](https://www.frankfurter.app), a public rates service, for the rate. Only the two currency codes are sent.",
-            "**Checking for updates** — when you choose *Check for updates* in Settings, the app asks GitHub for the latest Four Notes release. Nothing about you or your data is sent. See [GitHub’s privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).",
+            "**Checking for updates** — once a day, and when you choose *Check for updates* in Settings, the app asks GitHub for the latest Four Notes release. You can turn the daily check off in Settings → About. Nothing about you or your data is sent. See [GitHub’s privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).",
             "**Links you open** — *Search the web* and *Add to Google Calendar* open your browser with the note or task title filled in. Nothing is sent until you open the link.",
         ]),
         .p("Like any internet request, these reveal your IP address to the service you reach."),
@@ -142,6 +142,8 @@ enum LegalDocument: String, Identifiable, CaseIterable {
 struct LegalSheet: View {
     @Environment(\.palette) private var p
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.closeModal) private var closeModal
+    @Environment(\.modalMaxHeight) private var windowLimit
     let document: LegalDocument
 
     var body: some View {
@@ -150,7 +152,7 @@ struct LegalSheet: View {
                 Logo(size: 26)
                 Text("Four Notes").font(FN.font(15, .bold)).foregroundStyle(p.text)
                 Spacer()
-                PrimaryButton(title: "Done") { dismiss() }
+                PrimaryButton(title: "Done") { if let closeModal { closeModal() } else { dismiss() } }
                     .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
@@ -180,7 +182,7 @@ struct LegalSheet: View {
                 .frame(maxWidth: .infinity)
             }
         }
-        .frame(width: 720, height: 640)
+        .frame(width: 720, height: min(640, windowLimit ?? 640))
         .background(p.bg)
     }
 

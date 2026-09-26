@@ -94,7 +94,7 @@ struct ChatDock: View {
             // Recording shows its live status, so it needs the panel open.
             if recording && minimized { reveal() }
         }
-        .sheet(item: Binding(
+        .fnSheet(item: Binding(
             get: { splitTxId.map { IdentifiedString(value: $0) } },
             set: { splitTxId = $0?.value })) { wrapped in
             SplitEditorSheet(txId: wrapped.value)

@@ -308,14 +308,22 @@ struct StickyTextView: NSViewRepresentable {
         private var edited: NSRange?
         /// Set while tidying up after an edit, which edits too.
         private var tidying = false
+        /// The note's own undo history, not the window's shared one: text
+        /// put in from outside leaves the steps before it pointing past its
+        /// end, so it clears them — and only them.
+        let undoManager = UndoManager()
 
         init(_ parent: StickyTextView) { self.parent = parent }
+
+        func undoManager(for view: NSTextView) -> UndoManager? { undoManager }
 
         func load(_ text: String, into textView: NSTextView) {
             guard let storage = textView.textStorage else { return }
             let selected = textView.selectedRange()
             palette = parent.palette
             storage.setAttributedString(StickyText.attributed(text, palette: parent.palette))
+            // Undoing a step from before threw NSRangeException.
+            undoManager.removeAllActions()
             shown = text
             // NSRange counts UTF-16 units, as the storage does.
             textView.setSelectedRange(NSRange(location: min(selected.location, storage.length), length: 0))

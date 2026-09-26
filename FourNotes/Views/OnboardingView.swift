@@ -248,7 +248,7 @@ struct OnboardingView: View {
                 Toggle(isOn: Binding(get: { dock.isEnabled }, set: { if $0 != dock.isEnabled { dock.setEnabled($0) } })) {
                     Text("Show the edge dock").font(FN.font(13, .medium)).foregroundStyle(s.ink)
                 }
-                .toggleStyle(.checkbox)
+                .toggleStyle(.fnCheckbox)
                 .padding(.top, 6)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -338,13 +338,11 @@ struct OnboardingView: View {
 
                 HStack(spacing: 10) {
                     Text("Currency").font(FN.font(13)).foregroundStyle(s.muted)
-                    Picker("", selection: Binding(
+                    SelectMenu(options: CURRENCIES.map { ($0, $0) },
+                               selection: Binding(
                         get: { store.settings.currency },
-                        set: { c in store.updateSettings { $0.currency = c } })) {
-                            ForEach(CURRENCIES, id: \.self) { Text($0).tag($0) }
-                        }
-                        .labelsHidden()
-                        .fixedSize()
+                        set: { c in store.updateSettings { $0.currency = c } }),
+                               width: 110)
                 }
                 .padding(.top, 6)
 
@@ -861,8 +859,15 @@ private struct ThemeTile: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    @ViewBuilder
-    private var preview: some View {
+    private var preview: some View { ThemePreview(choice: choice) }
+}
+
+/// A theme drawn as a tiny window — sidebar, title and lines — in its own
+/// colours. System is half light, half dark. Used by setup and Settings.
+struct ThemePreview: View {
+    let choice: ThemeChoice
+
+    var body: some View {
         if choice == .system {
             // Half light, half dark: it follows the Mac.
             HStack(spacing: 0) {

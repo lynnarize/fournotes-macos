@@ -178,6 +178,27 @@ struct StickyTextTests {
         #expect(StickyText.plainText(from: h.textView.textStorage!) == "# New\n> quoted")
     }
 
+    @Test("text changed elsewhere leaves nothing to undo")
+    func externalChangeClearsUndo() throws {
+        let h = Harness("A first line that is long", palette: palette)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = h.textView
+        window.makeFirstResponder(h.textView)
+        let undo = try #require(h.textView.undoManager)
+        undo.groupsByEvent = false
+        h.caret(25)
+        undo.beginUndoGrouping()
+        h.type("!")
+        undo.endUndoGrouping()
+        // The app writes a shorter version. The step typed before is a range
+        // past its end: undoing it threw NSRangeException.
+        h.coordinator.load("Hi", into: h.textView)
+        #expect(!undo.canUndo)
+        undo.undo()
+        #expect(h.shown == "Hi")
+    }
+
     @Test("the same paper compares equal, so updates don't restyle")
     func paletteEquality() {
         #expect(StickyText.Palette(StickyPaper.of(.blue, dark: true)) == StickyText.Palette(StickyPaper.of(.blue, dark: true)))

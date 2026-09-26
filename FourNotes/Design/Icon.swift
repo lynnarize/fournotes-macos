@@ -74,6 +74,7 @@ extension Icon {
         "mic": "M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3",
         "send": "M5 12h14M13 6l6 6-6 6",
         "plus": "M12 5v14M5 12h14",
+        "minus": "M5 12h14",
         "trash": "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
         "bell": "M6 16V11a6 6 0 1 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0",
         "calendar": "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4",

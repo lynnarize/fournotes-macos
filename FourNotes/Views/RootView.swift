@@ -55,17 +55,20 @@ struct RootView: View {
             }
         }
         .animation(Motion.screen, value: nav.sheet == .onboarding)
-        .overlay(ToastStack().allowsHitTesting(false))
         // Search floats over the window instead (see paletteOverlay), and
         // setup covers it (above).
-        .sheet(item: Binding(get: { nav.sheet == .palette || nav.sheet == .onboarding ? nil : nav.sheet },
-                             set: { nav.sheet = $0 })) { sheet in
+        .fnSheet(item: Binding(get: { nav.sheet == .palette || nav.sheet == .onboarding ? nil : nav.sheet },
+                               set: { nav.sheet = $0 })) { sheet in
             switch sheet {
             case .settings: SettingsView()
             case .onboarding: EmptyView()
             case .palette: EmptyView()
             }
         }
+        // Menus and dialogs, drawn in the web app's style over the window.
+        // Toasts stay above them, as on the web.
+        .popupHost()
+        .overlay(ToastStack().allowsHitTesting(false))
         .task {
             // A brand new install starts on the setup wizard.
             if store.needsOnboarding, nav.sheet == nil { nav.present(.onboarding) }

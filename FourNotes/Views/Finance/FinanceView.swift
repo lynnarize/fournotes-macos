@@ -70,7 +70,7 @@ struct FinanceView: View {
         .task(id: nav.focus) {
             guard let link = nav.consumeFocus([.transactions, .budget]) else { return }
             if link.kind == .budget {
-                // Budgets live in a window (and in Settings); the dashboard doesn't show them.
+                // Budgets live in Finance settings; the dashboard doesn't show them.
                 showBudgets = true
             } else if let t = store.liveTransactions.first(where: { $0.id == link.id }) {
                 // Only move months for a date the app can actually read.
@@ -78,17 +78,26 @@ struct FinanceView: View {
                 openId = t.id
             }
         }
-        .sheet(isPresented: $showBudgets) {
-            SheetFrame(title: "Monthly budgets") {
-                VStack(spacing: 16) {
-                    BudgetEditor()
+        .fnSheet(isPresented: $showBudgets) {
+            // Budgets and categories, as the web app's Finance settings.
+            SheetFrame(title: "Finance settings", maxHeight: 720) {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        financeHeading("target", "Monthly budgets")
+                        BudgetEditor()
+                    }
+                    Rectangle().fill(p.line).frame(height: 1)
+                    VStack(alignment: .leading, spacing: 8) {
+                        financeHeading("finance", "Categories")
+                        CategoryEditor()
+                    }
                     PrimaryButton(title: "Done") { showBudgets = false }
                         .frame(maxWidth: .infinity)
                 }
             }
         }
-        .sheet(isPresented: $showPaste) { pasteSheet }
-        .sheet(isPresented: $showReport) { ReportView() }
+        .fnSheet(isPresented: $showPaste) { pasteSheet }
+        .fnSheet(isPresented: $showReport) { ReportView() }
     }
 
     // MARK: - Toolbar
@@ -131,11 +140,11 @@ struct FinanceView: View {
             .background(p.bg, in: Capsule())
             .overlay(Capsule().stroke(p.line, lineWidth: 1))
 
-            TextMenu(title: "Actions", help: "Report, paste a notification, budgets") {
+            TextMenu(title: "Actions", help: "Report, paste a notification, finance settings") {
                 [
                     .item("Monthly report…") { showReport = true },
                     .item("Paste a payment notification…") { showPaste = true },
-                    .item("Budgets…") { showBudgets = true },
+                    .item("Finance settings…") { showBudgets = true },
                 ]
             }
             .font(FN.bodyMedium)
@@ -143,6 +152,19 @@ struct FinanceView: View {
             .frame(minHeight: 44)
             .background(p.bg, in: Capsule())
             .overlay(Capsule().stroke(p.line, lineWidth: 1))
+
+            IconButton("settings", size: 18, box: 44, help: "Finance settings: budgets and categories") {
+                showBudgets = true
+            }
+            .background(p.bg, in: Circle())
+            .overlay(Circle().stroke(p.line, lineWidth: 1))
+        }
+    }
+
+    private func financeHeading(_ icon: String, _ title: String) -> some View {
+        HStack(spacing: 8) {
+            Icon(icon, size: 16).foregroundStyle(p.muted)
+            Text(title).font(FN.bodyMedium).foregroundStyle(p.text)
         }
     }
 
@@ -514,13 +536,11 @@ private struct TransactionRow: View {
                         .stroke(p.line, lineWidth: 1))
                 }
                 field("Currency") {
-                    Picker("", selection: Binding(
+                    SelectMenu(options: currencyOptions.map { ($0, $0) },
+                               selection: Binding(
                         get: { tx.currency },
-                        set: { c in store.updateTransaction(tx.id) { $0.currency = c; $0.fxRate = nil } })) {
-                            ForEach(currencyOptions, id: \.self) { Text($0).tag($0) }
-                        }
-                        .labelsHidden()
-                        .fixedSize()
+                        set: { c in store.updateTransaction(tx.id) { $0.currency = c; $0.fxRate = nil } }),
+                               width: 96)
                 }
                 if foreign {
                     field("Rate: 1 \(tx.currency) = ? \(cur)") {
@@ -535,15 +555,11 @@ private struct TransactionRow: View {
                     }
                 }
                 field("Linked note") {
-                    Picker("", selection: Binding(
+                    SelectMenu(options: [("", "None")] + store.liveNotes.map { ($0.id, $0.title.isEmpty ? "Untitled" : $0.title) },
+                               selection: Binding(
                         get: { tx.noteId ?? "" },
-                        set: { id in store.updateTransaction(tx.id) { $0.noteId = id.isEmpty ? nil : id } })) {
-                            Text("None").tag("")
-                            ForEach(store.liveNotes) { n in
-                                Text(n.title.isEmpty ? "Untitled" : n.title).tag(n.id)
-                            }
-                        }
-                        .labelsHidden()
+                        set: { id in store.updateTransaction(tx.id) { $0.noteId = id.isEmpty ? nil : id } }))
+                        .frame(maxWidth: 240, alignment: .leading)
                 }
                 Button("Delete transaction", role: .destructive) {
                     store.remove(.transactions, tx.id)

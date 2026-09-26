@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-// Settings: appearance, general, budgets, categories, AI providers and
-// API keys, data & privacy. Ported from src/components/SettingsModal.tsx.
+// Settings: appearance, general, sync, AI providers and API keys, data &
+// privacy. Budgets and categories live in Finance settings, as on the web.
+// Ported from src/components/SettingsModal.tsx.
 
 private let KOFI_URL = "https://ko-fi.com/lynnarize"
 
@@ -12,7 +13,7 @@ private let PRIVACY_POINTS: [(icon: String, title: String, text: String)] = [
     ("sparkle", "Shared with AI only when you ask",
      "Apple Intelligence and models in LM Studio or Ollama answer on this Mac. A cloud model you add gets only what a request needs, straight from this Mac. The results are saved here."),
     ("cloud", "Little else goes online",
-     "Exchange rates are looked up by currency code, Check for updates asks GitHub, and Sync, when you turn it on, talks only to Google Drive. That's all."),
+     "Exchange rates are looked up by currency code, GitHub is asked once a day for a newer release (you can turn that off), and Sync, when you turn it on, talks only to Google Drive. That's all."),
     ("key", "Your API keys stay private",
      "Keys are kept in this Mac's Keychain only. They are never included in backups."),
 ]
@@ -24,6 +25,7 @@ struct SettingsView: View {
     @ObservedObject private var sync = AppModel.shared.sync
     @Environment(\.palette) private var p
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.closeModal) private var closeModal
     @EnvironmentObject private var store: Store
     @EnvironmentObject private var nav: Navigation
     @EnvironmentObject private var toasts: ToastCenter
@@ -32,7 +34,8 @@ struct SettingsView: View {
     @AppStorage("fournotes.theme") private var themeRaw = ThemeChoice.system.rawValue
     @AppStorage(BriefStyle.storageKey) private var briefStyleRaw = BriefStyle.paragraph.rawValue
 
-    @State private var openSection: String? = "appearance"
+    /// The sections left open, remembered between visits as the web app does.
+    @AppStorage("fournotes.settings.open") private var openRaw = "appearance"
     @State private var confirmWipe = false
     @State private var wipeConfirmation = ""
     /// Which of "On this Mac" / "In the cloud" is unfolded.
@@ -47,8 +50,13 @@ struct SettingsView: View {
     private var settings: AppSettings { store.settings }
 
     var body: some View {
-        SheetFrame(title: "Settings", width: 620, maxHeight: 720) {
-            VStack(alignment: .leading, spacing: 10) {
+        SheetFrame(title: "Settings", width: 620, maxHeight: 760, actions: {
+            HStack(spacing: 0) {
+                GhostButton(action: { setAll(open: true) }) { Text("Expand all").font(FN.small) }
+                GhostButton(action: { setAll(open: false) }) { Text("Collapse all").font(FN.small) }
+            }
+        }) {
+            VStack(alignment: .leading, spacing: 12) {
                 section("appearance", icon: "moon", title: "Appearance",
                         summary: (ThemeChoice(rawValue: themeRaw) ?? .system).label) {
                     appearance
@@ -69,25 +77,13 @@ struct SettingsView: View {
                         syncSection
                     }
                 }
-                section("budgets", icon: "target", title: "Monthly budgets",
-                        summary: budgetSummary) {
-                    BudgetEditor()
-                }
-                section("categories", icon: "finance", title: "Categories",
-                        summary: "\(store.categories.count) in use") {
-                    categories
-                }
                 section("api", icon: "key", title: "AI & API keys", summary: apiSummary) {
                     apiKeys
                 }
                 section("privacy", icon: "shield", title: "Data & privacy", summary: dataSummary) {
                     privacy
                 }
-                section("legal", icon: "book", title: "Privacy & Terms",
-                        summary: "Updated \(LegalDocument.lastUpdated)") {
-                    legal
-                }
-                section("about", icon: "info", title: "About", summary: "Version \(AppVersion.short)") {
+                section("about", icon: "info", title: "About", summary: aboutSummary) {
                     about
                 }
                 kofi
@@ -95,8 +91,9 @@ struct SettingsView: View {
         }
         .sheet(item: $legalDocument) { LegalSheet(document: $0) }
         .onAppear {
+            updates.markSeen()
             if let requested = nav.settingsSection {
-                openSection = requested
+                setOpen(requested, true)
                 nav.settingsSection = nil
             }
         }
@@ -104,68 +101,81 @@ struct SettingsView: View {
 
     // MARK: - Section chrome
 
-    @ViewBuilder
+    private static let sectionIds = ["appearance", "today", "dock", "general", "sync",
+                                     "api", "privacy", "about"]
+
+    private var openSections: Set<String> {
+        Set(openRaw.split(separator: ",").map(String.init))
+    }
+
+    private func setOpen(_ id: String, _ open: Bool) {
+        var next = openSections
+        if open { next.insert(id) } else { next.remove(id) }
+        withAnimation(Motion.standard) { openRaw = next.sorted().joined(separator: ",") }
+    }
+
+    private func setAll(open: Bool) {
+        withAnimation(Motion.standard) { openRaw = open ? Self.sectionIds.joined(separator: ",") : "" }
+    }
+
+    /// A collapsible group, as SettingsSection.tsx: an icon tile, the title
+    /// with a one-line summary under it, and a chevron that turns when open.
     private func section<Content: View>(_ id: String, icon: String, title: String,
                                         summary: String,
                                         @ViewBuilder _ content: () -> Content) -> some View {
-        let isOpen = openSection == id
-        VStack(alignment: .leading, spacing: 0) {
-            Button { openSection = isOpen ? nil : id } label: {
-                HStack(spacing: 10) {
-                    Icon(icon, size: 16).foregroundStyle(p.muted)
-                    Text(title).font(FN.bodyMedium).foregroundStyle(p.text)
-                    Spacer()
-                    Text(summary).font(FN.small).foregroundStyle(p.faint).lineLimit(1)
-                    Icon("chevronDown", size: 14)
-                        .foregroundStyle(p.faint)
-                        .rotationEffect(.degrees(isOpen ? 0 : -90))
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
+        let isOpen = openSections.contains(id)
+        return VStack(alignment: .leading, spacing: 0) {
+            SettingsSectionHeader(icon: icon, title: title, summary: summary, isOpen: isOpen) {
+                setOpen(id, !isOpen)
             }
-            .buttonStyle(.fn)
-            .accessibilityLabel(title)
-            .accessibilityValue(summary)
-            .accessibilityHint(isOpen ? "Collapse this section" : "Expand this section")
-            .accessibilityAddTraits(.isButton)
 
             if isOpen {
-                Divider().overlay(p.line)
+                Rectangle().fill(p.line).frame(height: 1)
                 content()
-                    .padding(12)
-                    .transition(.opacity.combined(with: .offset(y: -8)))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity.combined(with: .offset(y: -6)))
             }
         }
-        .animation(Motion.standard, value: isOpen)
-        .background(p.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(p.line, lineWidth: 1))
+        .background(p.bg, in: RoundedRectangle(cornerRadius: FN.cardRadius, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: FN.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: FN.cardRadius, style: .continuous).stroke(p.line, lineWidth: 1))
     }
 
     // MARK: - Appearance
 
+    /// Each look drawn as a tiny window in its own colours, as in setup.
     private var appearance: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             ForEach(ThemeChoice.allCases, id: \.self) { choice in
-                Button { themeRaw = choice.rawValue } label: {
-                    VStack(spacing: 6) {
-                        Icon(choice.icon, size: 18)
-                        Text(choice.label).font(FN.body)
+                let selected = themeRaw == choice.rawValue
+                Button { withAnimation(Motion.standard) { themeRaw = choice.rawValue } } label: {
+                    VStack(spacing: 8) {
+                        ThemePreview(choice: choice)
+                            .frame(height: 76)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(selected ? p.accent : p.line, lineWidth: selected ? 2 : 1))
+                            .shadow(color: .black.opacity(selected ? 0.12 : 0.05), radius: selected ? 10 : 5, y: 3)
+                        HStack(spacing: 5) {
+                            Icon(choice.icon, size: 12)
+                            Text(choice.label)
+                        }
+                        .font(FN.font(12.5, selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? p.text : p.muted)
                     }
-                    .foregroundStyle(themeRaw == choice.rawValue ? p.accent : p.muted)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(themeRaw == choice.rawValue ? p.accent.opacity(0.12) : p.bg,
-                                in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: FN.radius, style: .continuous)
-                        .stroke(themeRaw == choice.rawValue ? p.accent : p.line, lineWidth: 1))
+                    .scaleEffect(selected ? 1.03 : 1)
                     .contentShape(Rectangle())
-                    .scaleEffect(themeRaw == choice.rawValue ? 1.02 : 1)
-                    .motion(themeRaw == choice.rawValue, Motion.quick)
                 }
                 .buttonStyle(.fn)
+                .animation(Motion.standard, value: selected)
+                .accessibilityLabel(choice.label)
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
+        .padding(.vertical, 4)
     }
 
     // MARK: - Today
@@ -223,7 +233,7 @@ struct SettingsView: View {
                 Toggle("Show the edge dock", isOn: Binding(
                     get: { dock.isEnabled },
                     set: { value in if value != dock.isEnabled { dock.setEnabled(value) } }))
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(.fnCheckbox)
                     .font(FN.body)
                 Text("A handle on the edge of the screen, over any app, that opens a quick note, today's tasks, dictation and more. Click it, or press ⇧⌘. from Four Notes. Closing the window leaves it running.")
                     .font(FN.small).foregroundStyle(p.muted)
@@ -233,22 +243,17 @@ struct SettingsView: View {
 
             Group {
                 labelled("Edge") {
-                    Picker("", selection: Binding(get: { dock.edge }, set: { dock.setEdge($0) })) {
-                        Text("Right").tag(DockEdge.right)
-                        Text("Left").tag(DockEdge.left)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
+                    SegmentedTabs(items: [("right", "Right"), ("left", "Left")],
+                                  selection: Binding(get: { dock.edge == .right ? "right" : "left" },
+                                                     set: { dock.setEdge($0 == "right" ? .right : .left) }))
+                        .fixedSize()
                 }
 
                 if dock.screens.count > 1 {
                     labelled("Screen") {
-                        Picker("", selection: Binding(get: { dock.screenId }, set: { dock.moveToScreen($0) })) {
-                            ForEach(dock.screens, id: \.id) { Text($0.name).tag($0.id) }
-                        }
-                        .labelsHidden()
-                        .fixedSize()
+                        SelectMenu(options: dock.screens.map { ($0.id, $0.name) },
+                                   selection: Binding(get: { dock.screenId }, set: { dock.moveToScreen($0) }))
+                            .fixedSize()
                     }
                 }
 
@@ -261,7 +266,7 @@ struct SettingsView: View {
                             Toggle(app.title, isOn: Binding(
                                 get: { !dock.hidden.contains(app) },
                                 set: { shown in dock.setHidden(app, !shown) }))
-                                .toggleStyle(.checkbox)
+                                .toggleStyle(.fnCheckbox)
                                 .font(FN.body)
                         }
                     }
@@ -282,7 +287,7 @@ struct SettingsView: View {
 
                 HStack(spacing: 8) {
                     SecondaryButton(title: "Open the dock now", icon: "arrowUpRight") {
-                        dismiss()
+                        if let closeModal { closeModal() } else { dismiss() }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { dock.open() }
                     }
                     Text("⇧⌘.").font(FN.small).foregroundStyle(p.faint)
@@ -308,40 +313,12 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Privacy & Terms
-
-    private var legal: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(LegalDocument.allCases) { document in
-                Button { legalDocument = document } label: {
-                    HStack(spacing: 10) {
-                        Icon(document == .privacy ? "shield" : "book", size: 16).foregroundStyle(p.muted)
-                        Text(document.title).font(FN.bodyMedium).foregroundStyle(p.text)
-                        Spacer()
-                        Icon("chevron", size: 13).foregroundStyle(p.faint)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(p.bg, in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: FN.radius, style: .continuous).stroke(p.line, lineWidth: 1))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.fn)
-            }
-            HStack(spacing: 4) {
-                Text("Questions?").foregroundStyle(p.muted)
-                Button(LegalDocument.contact) {
-                    if let url = URL(string: "mailto:\(LegalDocument.contact)") { NSWorkspace.shared.open(url) }
-                }
-                .buttonStyle(.fn)
-                .foregroundStyle(p.accent)
-            }
-            .font(FN.small)
-            .padding(.top, 2)
-        }
-    }
-
     // MARK: - About
+
+    private var aboutSummary: String {
+        if let available = updates.available { return "Version \(available.version) is available" }
+        return "Version \(AppVersion.short)"
+    }
 
     private var about: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -363,6 +340,20 @@ struct SettingsView: View {
                 }
             }
             updateStatus
+            Toggle("Check for updates automatically, once a day", isOn: $updates.automatic)
+                .toggleStyle(.fnCheckbox)
+                .font(FN.body)
+        }
+    }
+
+    private func availableLine(_ version: String, _ page: URL) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(p.danger).frame(width: 7, height: 7)
+            Text("Version \(version) is available.").font(FN.small).foregroundStyle(p.text)
+            Button("Download") { NSWorkspace.shared.open(page) }
+                .buttonStyle(.fn)
+                .font(FN.small)
+                .foregroundStyle(p.accent)
         }
     }
 
@@ -377,19 +368,17 @@ struct SettingsView: View {
     private var updateStatus: some View {
         switch updates.state {
         case .idle, .checking:
-            Text("Asks GitHub for the latest release. Nothing else is sent.")
-                .font(FN.small).foregroundStyle(p.faint)
+            if let available = updates.available {
+                availableLine(available.version, available.page)
+            } else {
+                Text("Asks GitHub for the latest release. Nothing else is sent.")
+                    .font(FN.small).foregroundStyle(p.faint)
+            }
         case .upToDate:
             Label { Text("You're on the latest version.") } icon: { Icon("check", size: 13) }
                 .font(FN.small).foregroundStyle(p.muted)
         case .available(let version, let page):
-            HStack(spacing: 8) {
-                Text("Version \(version) is available.").font(FN.small).foregroundStyle(p.text)
-                Button("Download") { NSWorkspace.shared.open(page) }
-                    .buttonStyle(.fn)
-                    .font(FN.small)
-                    .foregroundStyle(p.accent)
-            }
+            availableLine(version, page)
         case .failed(let message):
             Text(message).font(FN.small).foregroundStyle(p.danger)
         }
@@ -425,7 +414,7 @@ struct SettingsView: View {
                         Text("Your data stays on this Mac either way.")
                             .font(FN.small).foregroundStyle(p.muted)
                         Toggle("Also delete the copy in Google Drive", isOn: $deleteDriveCopy)
-                            .toggleStyle(.checkbox)
+                            .toggleStyle(.fnCheckbox)
                             .font(FN.body)
                         HStack(spacing: 8) {
                             PrimaryButton(title: "Disconnect", tone: deleteDriveCopy ? p.danger : nil) {
@@ -493,19 +482,15 @@ struct SettingsView: View {
             }
 
             labelled("Base currency") {
-                Picker("", selection: Binding(
-                    get: { settings.currency },
-                    set: { changeCurrency($0) })) {
-                        ForEach(currencyOptions, id: \.self) { Text($0).tag($0) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
+                SelectMenu(options: currencyOptions.map { ($0, $0) },
+                           selection: Binding(get: { settings.currency }, set: { changeCurrency($0) }),
+                           width: 110)
             }
 
             Toggle("Speak replies aloud in voice mode", isOn: Binding(
                 get: { settings.voiceReplies },
                 set: { value in store.updateSettings { $0.voiceReplies = value } }))
-                .toggleStyle(.checkbox)
+                .toggleStyle(.fnCheckbox)
                 .font(FN.body)
 
             SecondaryButton(title: "Run first-time setup again") {
@@ -529,51 +514,6 @@ struct SettingsView: View {
             store.updateTransaction(t.id) { $0.fxRate = nil }
         }
         toasts.push("Base currency is now \(currency). Budgets stay as numbers; adjust them if needed.")
-    }
-
-    // MARK: - Categories
-
-    @State private var newCategory = ""
-
-    private var categories: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Built-in categories always exist. Add your own for the way you spend.")
-                .font(FN.small).foregroundStyle(p.muted)
-
-            FlowLayout(spacing: 6, alignment: .leading) {
-                ForEach(store.categories, id: \.self) { c in
-                    let custom = (settings.categories ?? []).contains(c)
-                    HStack(spacing: 4) {
-                        Icon(categoryIcon(c), size: 11)
-                        Text(c)
-                        if custom {
-                            Button { store.removeCategory(c) } label: { Icon("x", size: 10) }
-                                .buttonStyle(.fn)
-                        }
-                    }
-                    .font(FN.small)
-                    .foregroundStyle(custom ? p.text : p.muted)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(p.hover, in: Capsule())
-                    .transition(.scale(scale: 0.85).combined(with: .opacity))
-                }
-            }
-            .animation(Motion.list, value: store.categories)
-
-            HStack(spacing: 8) {
-                BoxedField(placeholder: "New category", text: $newCategory) { addCategory() }
-                SecondaryButton(title: "Add", action: addCategory)
-            }
-        }
-    }
-
-    private func addCategory() {
-        if store.addCategory(newCategory) != nil {
-            newCategory = ""
-        } else if !newCategory.isEmpty {
-            toasts.push("That category already exists.", tone: .error)
-        }
     }
 
     // MARK: - API keys and providers
@@ -702,20 +642,14 @@ struct SettingsView: View {
 
             HStack(spacing: 12) {
                 labelled("Model") {
-                    Picker("", selection: keychainBinding(.anthropicModel,
-                                                          default: AnthropicClient.defaultModel)) {
-                        ForEach(AnthropicClient.userModels, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
+                    SelectMenu(options: AnthropicClient.userModels.map { ($0.id, $0.label) },
+                               selection: keychainBinding(.anthropicModel, default: AnthropicClient.defaultModel))
+                        .fixedSize()
                 }
                 labelled("Brief & review") {
-                    Picker("", selection: keychainBinding(.anthropicFastModel,
-                                                          default: AnthropicClient.defaultFastModel)) {
-                        ForEach(AnthropicClient.userModels, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
+                    SelectMenu(options: AnthropicClient.userModels.map { ($0.id, $0.label) },
+                               selection: keychainBinding(.anthropicFastModel, default: AnthropicClient.defaultFastModel))
+                        .fixedSize()
                 }
             }
 
@@ -760,12 +694,6 @@ struct SettingsView: View {
         return "\(plural(c.notes, "note")) · \(plural(c.tasks, "task")) · \(plural(c.transactions, "transaction"))"
     }
 
-    private var budgetSummary: String {
-        let values = settings.budgets.values.filter { $0 > 0 }
-        guard !values.isEmpty else { return "None set" }
-        return "\(values.count) set · \(Money.format(values.reduce(0, +), settings.currency, compact: true)) a month"
-    }
-
     private func plural(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
 
     private var privacy: some View {
@@ -790,6 +718,8 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            legalLinks
 
             boxed {
                 Text("Sample data").font(FN.bodyMedium).foregroundStyle(p.text)
@@ -850,6 +780,27 @@ struct SettingsView: View {
             .overlay(RoundedRectangle(cornerRadius: FN.radius, style: .continuous)
                 .stroke(p.danger.opacity(0.45), lineWidth: 1))
         }
+    }
+
+    /// The full Privacy Policy and Terms, opened over Settings.
+    private var legalLinks: some View {
+        HStack(spacing: 4) {
+            Text("Full details:").foregroundStyle(p.muted)
+            ForEach(Array(LegalDocument.allCases.enumerated()), id: \.element.id) { index, document in
+                if index > 0 { Text("·").foregroundStyle(p.faint) }
+                Button(document.title) { legalDocument = document }
+                    .buttonStyle(.fn)
+                    .foregroundStyle(p.accent)
+                    .underline()
+            }
+            Text("· Questions?").foregroundStyle(p.muted)
+            Button(LegalDocument.contact) {
+                if let url = URL(string: "mailto:\(LegalDocument.contact)") { NSWorkspace.shared.open(url) }
+            }
+            .buttonStyle(.fn)
+            .foregroundStyle(p.accent)
+        }
+        .font(FN.small)
     }
 
     private func statTile(_ label: String, _ n: Int) -> some View {
@@ -1009,5 +960,49 @@ struct KeyField: View {
         editing = false
         refresh()
         onChange()
+    }
+}
+
+/// A settings section's header row. Tints on hover, like the web app's.
+private struct SettingsSectionHeader: View {
+    @Environment(\.palette) private var p
+    @State private var hovering = false
+    let icon: String
+    let title: String
+    let summary: String
+    let isOpen: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 12) {
+                Icon(icon, size: 16)
+                    .foregroundStyle(p.muted)
+                    .frame(width: 32, height: 32)
+                    .background(p.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(FN.font(14, .medium)).foregroundStyle(p.text)
+                    if !summary.isEmpty {
+                        Text(summary).font(FN.small).foregroundStyle(p.muted)
+                            .lineLimit(1).truncationMode(.tail)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Icon("chevron", size: 16)
+                    .foregroundStyle(p.muted)
+                    .rotationEffect(.degrees(isOpen ? 90 : 0))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(hovering ? p.hover : .clear)
+            .motion(hovering, Motion.quick)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(title)
+        .accessibilityValue(summary)
+        .accessibilityHint(isOpen ? "Collapse this section" : "Expand this section")
+        .accessibilityAddTraits(.isButton)
     }
 }

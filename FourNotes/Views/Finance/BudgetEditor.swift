@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Monthly budget per category, with this month's spending for context.
-// Used in Finance -> Budgets and in Settings.
+// Used in Finance settings.
 // Ported from src/components/BudgetEditor.tsx.
 
 struct BudgetEditor: View {
@@ -78,5 +78,56 @@ struct BudgetEditor: View {
             .motion(limit, Motion.quick)
         }
         .padding(.vertical, 10)
+    }
+}
+
+/// The categories in use: built-in ones, and your own, which can be removed.
+/// Ported from src/components/CategoryEditor.tsx.
+struct CategoryEditor: View {
+    @Environment(\.palette) private var p
+    @EnvironmentObject private var store: Store
+    @EnvironmentObject private var toasts: ToastCenter
+    @State private var newCategory = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Built-in categories always exist. Add your own for the way you spend.")
+                .font(FN.small).foregroundStyle(p.muted)
+
+            FlowLayout(spacing: 6, alignment: .leading) {
+                ForEach(store.categories, id: \.self) { c in
+                    let custom = (store.settings.categories ?? []).contains(c)
+                    HStack(spacing: 4) {
+                        Icon(categoryIcon(c), size: 11)
+                        Text(c)
+                        if custom {
+                            Button { store.removeCategory(c) } label: { Icon("x", size: 10) }
+                                .buttonStyle(.fn)
+                                .accessibilityLabel("Remove \(c)")
+                        }
+                    }
+                    .font(FN.small)
+                    .foregroundStyle(custom ? p.text : p.muted)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(p.hover, in: Capsule())
+                    .transition(.scale(scale: 0.85).combined(with: .opacity))
+                }
+            }
+            .animation(Motion.list, value: store.categories)
+
+            HStack(spacing: 8) {
+                BoxedField(placeholder: "New category", text: $newCategory) { add() }
+                SecondaryButton(title: "Add", action: add)
+            }
+        }
+    }
+
+    private func add() {
+        if store.addCategory(newCategory) != nil {
+            newCategory = ""
+        } else if !newCategory.isEmpty {
+            toasts.push("That category already exists.", tone: .error)
+        }
     }
 }

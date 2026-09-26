@@ -10,7 +10,8 @@ import AppKit
 // the main thread on every keystroke. HTML is now produced only on export, from
 // the plain text, by the converter both apps already share (NoteText).
 
-/// A checkbox in a note. Carries its own state so toggling one is a local edit.
+/// A checkbox in a note. Carries its own state; ticking one puts a new box in
+/// its place, so undo, and every copy of the text made before, keep the old.
 ///
 /// The image is drawn on demand rather than stored on the attachment: setting
 /// `image` puts the whole bitmap into the note's archive, which took a
@@ -18,7 +19,7 @@ import AppKit
 final class CheckboxAttachment: NSTextAttachment {
     override class var supportsSecureCoding: Bool { true }
 
-    var isChecked: Bool
+    private(set) var isChecked: Bool
 
     init(checked: Bool) {
         self.isChecked = checked
@@ -33,8 +34,13 @@ final class CheckboxAttachment: NSTextAttachment {
     }
 
     required init?(coder: NSCoder) {
-        isChecked = coder.decodeBool(forKey: "isChecked")
+        let checked = coder.decodeBool(forKey: "isChecked")
+        isChecked = checked
         super.init(coder: coder)
+        // Set again: NSTextAttachment's own decoding goes through
+        // `init(data:ofType:)`, whose override above unticks the box. Every
+        // ticked box in a note saved with formatting came back unticked.
+        isChecked = checked
     }
 
     override func encode(with coder: NSCoder) {
@@ -392,9 +398,16 @@ enum NoteDocument {
     /// broken into one-item pieces — AppKit numbered every item "1." — and
     /// pressing Return at the end of an item left the list.
     private static func lineBreak(after document: NSAttributedString) -> NSAttributedString {
-        let text = document.string as NSString
-        guard text.length > 0, text.character(at: text.length - 1) != 0x0A,
-              !(text as String).hasSuffix(dividerGlyphs) else {
+        // Only its last characters are read. Its `string` is a copy of all of
+        // it, and this runs once a line: a 3,000-line note took over half a
+        // second to open, more the longer it got.
+        func ends(with suffix: String) -> Bool {
+            let length = (suffix as NSString).length
+            guard document.length >= length else { return false }
+            return document.attributedSubstring(from: NSRange(location: document.length - length, length: length))
+                .string == suffix
+        }
+        guard document.length > 0, !ends(with: "\n"), !ends(with: dividerGlyphs) else {
             // An empty line, or a divider, whose centring must not carry on
             // into what is typed below it: a plain newline.
             return NSAttributedString(string: "\n", attributes: baseAttributes)
@@ -402,7 +415,7 @@ enum NoteDocument {
         // Only the paragraph style: a heading's font on the newline would make
         // anything typed on the empty line below it heading-sized.
         var attributes = baseAttributes
-        attributes[.paragraphStyle] = document.attribute(.paragraphStyle, at: text.length - 1,
+        attributes[.paragraphStyle] = document.attribute(.paragraphStyle, at: document.length - 1,
                                                          effectiveRange: nil)
         return NSAttributedString(string: "\n", attributes: attributes)
     }
@@ -502,6 +515,143 @@ enum NoteDocument {
         return found
     }
 
+    // MARK: - Pasted text
+
+    /// Rich text pasted from elsewhere — a web page, Mail, Pages — in the
+    /// note's own style. It keeps what the text says and how it is built:
+    /// bold, italic, code, links, headings, lists. It drops how the page
+    /// looked: its fonts, colours, backgrounds and spacing.
+    ///
+    /// AppKit's HTML reader also writes each list item's marker into the
+    /// text — "\t•\t", "\t1\t" — besides making it a list item, so pasted
+    /// lists showed two bullets.
+    static func pasted(_ source: NSAttributedString) -> NSAttributedString {
+        let text = source.string as NSString
+        let full = NSRange(location: 0, length: text.length)
+
+        // The size most of the text is in; larger runs are headings.
+        var sizes: [CGFloat: Int] = [:]
+        source.enumerateAttribute(.font, in: full, options: []) { value, range, _ in
+            sizes[(value as? NSFont)?.pointSize ?? 12, default: 0] += range.length
+        }
+        let usual = sizes.max { $0.value < $1.value }?.key ?? 12
+
+        struct Block {
+            var content: NSAttributedString
+            var style: NSParagraphStyle?
+            /// The top-level list it is an item of, if any.
+            var list: ObjectIdentifier?
+            var spacedAfter: Bool
+        }
+        var blocks: [Block] = []
+        // The page's lists, each rebuilt once, so items stay one list.
+        var rebuilt: [ObjectIdentifier: NSTextList] = [:]
+
+        var location = 0
+        while location < text.length {
+            let paragraph = text.paragraphRange(for: NSRange(location: location, length: 0))
+            location = NSMaxRange(paragraph)
+            var body = paragraph
+            while body.length > 0,
+                  let last = Unicode.Scalar(text.character(at: NSMaxRange(body) - 1)),
+                  CharacterSet.newlines.contains(last) {
+                body.length -= 1
+            }
+            let sourceStyle = source.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil)
+                as? NSParagraphStyle
+            let lists = Array((sourceStyle?.textLists ?? []).prefix(maxDepth + 1))
+
+            if !lists.isEmpty, let marker = text.substring(with: body).firstMatch(of: /^\t[^\t\n]*\t/) {
+                let length = (String(marker.0) as NSString).length
+                body = NSRange(location: body.location + length, length: body.length - length)
+            }
+
+            let content = NSMutableAttributedString()
+            source.enumerateAttributes(in: body, options: []) { attributes, run, _ in
+                // A page's images don't come along; they would be a bare "￼".
+                guard attributes[.attachment] == nil else { return }
+                content.append(NSAttributedString(string: text.substring(with: run),
+                                                  attributes: pastedAttributes(attributes, usualSize: usual)))
+            }
+
+            var style: NSParagraphStyle?
+            if !lists.isEmpty {
+                style = listParagraphStyle(lists.map { list in
+                    let key = ObjectIdentifier(list)
+                    if let known = rebuilt[key] { return known }
+                    let made = NSTextList(markerFormat: list.markerFormat == .decimal ? .decimal : .disc, options: 0)
+                    rebuilt[key] = made
+                    return made
+                })
+            } else if let alignment = sourceStyle?.alignment, alignment == .center || alignment == .right {
+                let aligned = NSMutableParagraphStyle()
+                aligned.alignment = alignment
+                style = aligned
+            }
+            let spacing = (sourceStyle?.paragraphSpacing ?? 0) + (sourceStyle?.paragraphSpacingBefore ?? 0)
+            blocks.append(Block(content: content, style: style, list: lists.first.map(ObjectIdentifier.init),
+                                spacedAfter: spacing > 1))
+        }
+
+        let out = NSMutableAttributedString()
+        for (index, block) in blocks.enumerated() {
+            let isEmpty = block.content.length == 0
+            // One blank line at a time.
+            if isEmpty, index > 0, blocks[index - 1].content.length == 0 { continue }
+            let start = out.length
+            out.append(block.content)
+            guard index < blocks.count - 1 else {
+                if let style = block.style {
+                    out.addAttribute(.paragraphStyle, value: style, range: NSRange(location: start, length: out.length - start))
+                }
+                break
+            }
+            // The newline carries the paragraph's style, so a list stays one list.
+            var breakAttributes = baseAttributes
+            breakAttributes[.paragraphStyle] = block.style
+            out.append(NSAttributedString(string: "\n", attributes: breakAttributes))
+            if let style = block.style {
+                out.addAttribute(.paragraphStyle, value: style, range: NSRange(location: start, length: out.length - start))
+            }
+            // Space the page put between blocks becomes a blank line, as a note
+            // writes it — but not between items of one list.
+            let next = blocks[index + 1]
+            let sameList = block.list != nil && block.list == next.list
+            let kindChanges = (block.list == nil) != (next.list == nil)
+            if !isEmpty, next.content.length > 0, !sameList, block.spacedAfter || kindChanges {
+                out.append(NSAttributedString(string: "\n", attributes: baseAttributes))
+            }
+        }
+        // In the note's rhythm, as it will be once reopened. Without it a
+        // pasted paragraph had AppKit's line height and no gap after it.
+        return spaced(out)
+    }
+
+    /// A pasted run's attributes in the note's terms.
+    private static func pastedAttributes(_ attributes: [NSAttributedString.Key: Any],
+                                         usualSize: CGFloat) -> [NSAttributedString.Key: Any] {
+        var clean: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.labelColor]
+        let font = attributes[.font] as? NSFont
+        let traits = font.map { NSFontManager.shared.traits(of: $0) } ?? []
+        let ratio = (font?.pointSize ?? usualSize) / max(1, usualSize)
+        if let font, font.isFixedPitch || traits.contains(.fixedPitchFontMask) {
+            clean[.font] = codeFont
+        } else if ratio >= 1.12 {
+            clean[.font] = headingFont(ratio >= 1.7 ? 1 : ratio >= 1.35 ? 2 : 3)
+        } else {
+            var body = bodyFont
+            if traits.contains(.boldFontMask) { body = NSFontManager.shared.convert(body, toHaveTrait: .boldFontMask) }
+            if traits.contains(.italicFontMask) { body = NSFontManager.shared.convert(body, toHaveTrait: .italicFontMask) }
+            clean[.font] = body
+        }
+        if let link = attributes[.link] { clean[.link] = link }
+        for key in [NSAttributedString.Key.underlineStyle, .strikethroughStyle, .superscript]
+        where (attributes[key] as? Int ?? 0) != 0 {
+            clean[key] = attributes[key]
+        }
+        return clean
+    }
+
     // MARK: - Storage
 
     /// True when the document carries formatting the plain-text form cannot
@@ -509,34 +659,77 @@ enum NoteDocument {
     /// checklists, headings, quotes) does not count, because the plain text
     /// carries that already.
     static func hasInlineFormatting(_ attributed: NSAttributedString) -> Bool {
-        let full = NSRange(location: 0, length: attributed.length)
-        var found = false
+        let text = attributed.string as NSString
         let manager = NSFontManager.shared
-
-        attributed.enumerateAttributes(in: full, options: []) { attributes, _, stop in
-            if attributes[.underlineStyle] != nil || attributes[.strikethroughStyle] != nil
-                || attributes[.link] != nil || attributes[.backgroundColor] != nil
-                || (attributes[.superscript] as? Int ?? 0) != 0 {
-                found = true; stop.pointee = true; return
+        // A paragraph at a time: what the plain text can say depends on the
+        // line, and one run of attributes can reach across two.
+        var location = 0
+        while location < text.length {
+            let paragraph = text.paragraphRange(for: NSRange(location: location, length: 0))
+            location = NSMaxRange(paragraph)
+            // A divider is centred and faint, which is how `---` is shown.
+            // Counted as formatting, it kept a note in the rich form, which
+            // the edge stickies don't edit.
+            if paragraph.length <= (dividerGlyphs as NSString).length + 1,
+               text.substring(with: paragraph).trimmingCharacters(in: .newlines) == dividerGlyphs { continue }
+            let heading = headingFace(of: paragraph, in: attributed)
+            var found = false
+            attributed.enumerateAttributes(in: paragraph, options: []) { attributes, range, stop in
+                found = isFormatted(attributes, text: text.substring(with: range), heading: heading, manager: manager)
+                if found { stop.pointee = true }
             }
-            if let color = attributes[.foregroundColor] as? NSColor,
-               color != .labelColor, color != .secondaryLabelColor {
-                found = true; stop.pointee = true; return
-            }
-            if let font = attributes[.font] as? NSFont {
-                let traits = manager.traits(of: font)
-                let styled = traits.contains(.boldFontMask) || traits.contains(.italicFontMask)
-                let sized = headingLevel(of: font) == nil && font.pointSize != bodySize
-                // Serif, monospace, a code block: plain text has no way to say so.
-                let family = font.familyName != bodyFamily
-                if styled || sized || family { found = true; stop.pointee = true; return }
-            }
-            if let style = attributes[.paragraphStyle] as? NSParagraphStyle,
-               style.alignment != .natural, style.alignment != .left {
-                found = true; stop.pointee = true; return
-            }
+            if found { return true }
         }
-        return found
+        return false
+    }
+
+    /// Whether a run carries what its plain-text line can't. `heading` is the
+    /// face the line comes back in when it is written "#".
+    private static func isFormatted(_ attributes: [NSAttributedString.Key: Any], text: String,
+                                    heading: NSFont?, manager: NSFontManager) -> Bool {
+        if attributes[.underlineStyle] != nil || attributes[.strikethroughStyle] != nil
+            || attributes[.link] != nil || attributes[.backgroundColor] != nil
+            || (attributes[.superscript] as? Int ?? 0) != 0 {
+            return true
+        }
+        if let color = attributes[.foregroundColor] as? NSColor,
+           color != .labelColor, color != .secondaryLabelColor {
+            return true
+        }
+        if let style = attributes[.paragraphStyle] as? NSParagraphStyle,
+           style.alignment != .natural, style.alignment != .left {
+            return true
+        }
+        // A line break's face shows nowhere.
+        guard let font = attributes[.font] as? NSFont,
+              !text.trimmingCharacters(in: .newlines).isEmpty else { return false }
+        if let heading {
+            // Written "#": a heading's own face, bold and all, is structure.
+            // Counted as formatting, every note with a heading was kept in the
+            // rich form. Words in another face would come back in the heading's.
+            return font != heading
+        }
+        let traits = manager.traits(of: font)
+        let styled = traits.contains(.boldFontMask) || traits.contains(.italicFontMask)
+        // Only a line written "#" comes back larger.
+        let sized = font.pointSize != bodySize
+        // Serif, monospace, a code block: plain text has no way to say so.
+        let family = font.familyName != bodyFamily
+        return styled || sized || family
+    }
+
+    /// The heading face a paragraph comes back in from its plain-text line:
+    /// its first character's, when that is a heading's own and the line is
+    /// written as nothing else first — not a list or checklist item, not a
+    /// quote (see `line(in:paragraph:)`).
+    private static func headingFace(of paragraph: NSRange, in document: NSAttributedString) -> NSFont? {
+        guard paragraph.length > 0,
+              let lead = document.attribute(.font, at: paragraph.location, effectiveRange: nil) as? NSFont,
+              let level = headingLevel(of: lead), lead == headingFont(level) else { return nil }
+        let style = document.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil)
+            as? NSParagraphStyle
+        guard style?.textLists.isEmpty ?? true, (style?.firstLineHeadIndent ?? 0) == 0 else { return nil }
+        return lead
     }
 
     /// The native archive stored on the note.

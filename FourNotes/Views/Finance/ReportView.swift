@@ -69,11 +69,7 @@ struct ReportView: View {
         SheetFrame(title: "Annual report", width: 900, maxHeight: 720) {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 8) {
-                    Picker("", selection: $year) {
-                        ForEach(years, id: \.self) { Text($0).tag($0) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
+                    SelectMenu(options: years.map { ($0, $0) }, selection: $year, width: 90)
 
                     Spacer()
 

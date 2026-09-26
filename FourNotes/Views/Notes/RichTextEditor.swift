@@ -102,7 +102,7 @@ final class RichTextController: ObservableObject {
         guard tv.shouldChangeText(in: insertion, replacementString: block.string) else { return }
         storage.replaceCharacters(in: insertion, with: block)
         tv.didChangeText()
-        tv.scrollRangeToVisible(NSRange(location: at + block.length, length: 0))
+        (tv as? NoteTextView)?.scrollIntoView(characterAt: at + block.length)
         refreshState()
     }
 
@@ -423,7 +423,7 @@ final class RichTextController: ObservableObject {
         tv.didChangeText()
         tv.setSelectedRange(NSRange(location: selection.location + item.length, length: 0))
         tv.typingAttributes = attributes
-        tv.scrollRangeToVisible(tv.selectedRange())
+        (tv as? NoteTextView)?.scrollIntoView(characterAt: tv.selectedRange().location)
         refreshState()
         return true
     }
@@ -485,10 +485,10 @@ final class RichTextController: ObservableObject {
                   as? CheckboxAttachment else { return }
         let range = NSRange(location: index, length: 1)
         guard tv.shouldChangeText(in: range, replacementString: nil) else { return }
-        box.isChecked.toggle()
-        // The attachment is drawn from its own state, so the layout has to be
-        // told the glyph changed.
-        storage.edited(.editedAttributes, range: range, changeInLength: 0)
+        // A new box in its place, not the old one changed: undo puts back the
+        // attachment the text had, and when that was the same object, ticked
+        // by then, the box stayed ticked — and was saved ticked.
+        storage.addAttribute(.attachment, value: CheckboxAttachment(checked: !box.isChecked), range: range)
         tv.didChangeText()
     }
 
@@ -991,8 +991,9 @@ final class NoteTextView: NSTextView {
     /// ⌘B, ⌘I and ⌘U, as the toolbar's tooltips say. Most Mac apps get them
     /// from a Format menu; this one has none, so they did nothing.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Only the keys that change a shortcut: with Caps Lock on, it did nothing.
         guard let controller, window?.firstResponder === self,
-              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else {
+              event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command else {
             return super.performKeyEquivalent(with: event)
         }
         switch event.charactersIgnoringModifiers?.lowercased() {
@@ -1009,22 +1010,81 @@ final class NoteTextView: NSTextView {
     func layOutEverything() {
         guard let manager = textLayoutManager else { return }
         manager.ensureLayout(for: manager.documentRange)
+        // The view takes its height from the viewport's layout, not the
+        // text's: an edit made in code — a paste, the assistant's text —
+        // left the page its old height, with nowhere to scroll to the end.
+        // Typing got a viewport pass from AppKit first, so only it grew.
+        manager.textViewportLayoutController.layoutViewport()
     }
 
+    /// Room kept below the line being typed when the page scrolls down to
+    /// it, so the new line isn't pressed against the bottom edge.
+    static let typingRoom: CGFloat = 40
+
+    /// The page grows with the text straight away, and the line being typed
+    /// on stays in view. Return at the end of a long note used to leave the
+    /// caret below the bottom edge, to be scrolled to by hand: the page only
+    /// grew at the next layout pass, and AppKit's own scrolling never reached
+    /// the new line (see `scrollIntoView`).
     override func didChangeText() {
         super.didChangeText()
         layOutEverything()
+        (superview as? NoteDocumentView)?.fitToText()
+        if caretWasInView, window?.firstResponder === self {
+            scrollIntoView(characterAt: selectedRange().location)
+        }
+    }
+
+    /// Whether the caret was in view as the edit under way began. Only then
+    /// does the edit keep it there: ticking a box on a page scrolled away
+    /// from the caret mustn't jump back to it.
+    private var caretWasInView = false
+
+    override func shouldChangeText(inRanges affectedRanges: [NSValue], replacementStrings: [String]?) -> Bool {
+        caretWasInView = lineRect(characterAt: selectedRange().location).map { line in
+            guard let clip = enclosingScrollView?.contentView else { return false }
+            let inClip = convert(line, to: clip)
+            return inClip.maxY >= clip.bounds.minY && inClip.minY <= clip.bounds.maxY
+        } ?? false
+        return super.shouldChangeText(inRanges: affectedRanges, replacementStrings: replacementStrings)
+    }
+
+    /// Scrolls the line holding the character at `index` — or the caret
+    /// there — into view.
+    func scrollIntoView(characterAt index: Int) {
+        guard let line = lineRect(characterAt: index) else { return }
+        _ = scrollToVisible(line)
+    }
+
+    /// Where the line holding the character at `index` is, in this view.
+    /// Asked of the layout itself: `scrollRangeToVisible` does nothing for a
+    /// line just added at the end, since under TextKit 2 it asks the
+    /// viewport, which hasn't laid that line out yet.
+    private func lineRect(characterAt index: Int) -> NSRect? {
+        guard let manager = textLayoutManager, let content = manager.textContentManager,
+              let location = content.location(content.documentRange.location,
+                                              offsetBy: min(max(0, index), textStorage?.length ?? 0))
+        else { return nil }
+        var line: NSRect?
+        manager.enumerateTextSegments(in: NSTextRange(location: location), type: .standard,
+                                      options: [.rangeNotRequired]) { _, frame, _, _ in
+            line = frame
+            return false
+        }
+        return line?.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
     }
 
     /// Scrolls only when the rect is really off screen. In the editor's
     /// SwiftUI scroll view, AppKit counted part of the visible area as
     /// covered, so a click near the top of the note jumped the page.
     override func scrollToVisible(_ rect: NSRect) -> Bool {
-        if let clip = enclosingScrollView?.contentView,
-           clip.bounds.contains(convert(rect, to: clip)) {
-            return false
-        }
-        return super.scrollToVisible(rect)
+        guard let clip = enclosingScrollView?.contentView else { return super.scrollToVisible(rect) }
+        let inClip = convert(rect, to: clip)
+        if clip.bounds.contains(inClip) { return false }
+        var target = rect
+        // Going down to it: with a little room beneath.
+        if inClip.maxY > clip.bounds.maxY { target.size.height += Self.typingRoom }
+        return super.scrollToVisible(target)
     }
 
     /// A click on a checklist box ticks it.
@@ -1032,6 +1092,72 @@ final class NoteTextView: NSTextView {
     /// Found without `layoutManager`: asking for it moves the view onto the
     /// older TextKit 1 for good, which doesn't draw list bullets — one click
     /// in a note and every bullet vanished. These calls stay on TextKit 2.
+    // MARK: Copy and paste
+
+    /// A note's own text on the pasteboard, exactly: checkboxes, colours,
+    /// fonts. Only this app reads it; other apps get the usual RTF and text.
+    nonisolated static let noteTextType = NSPasteboard.PasteboardType("com.fournotes.mac.note-text")
+
+    /// Rich text other apps put on the pasteboard, which is cleaned on paste.
+    private static let richTypes: Set<NSPasteboard.PasteboardType> = [
+        .rtf, .rtfd, .html, NSPasteboard.PasteboardType("com.apple.webarchive"),
+        NSPasteboard.PasteboardType("com.apple.flat-rtfd"),
+    ]
+
+    override var writablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        [Self.noteTextType] + super.writablePasteboardTypes
+    }
+
+    override func writeSelection(to pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        guard type == Self.noteTextType else { return super.writeSelection(to: pboard, type: type) }
+        let range = selectedRange()
+        guard range.length > 0, let storage = textStorage, NSMaxRange(range) <= storage.length,
+              let data = NoteDocument.archive(storage.attributedSubstring(from: range)) else { return false }
+        return pboard.setData(data, forType: type)
+    }
+
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        [Self.noteTextType] + super.readablePasteboardTypes
+    }
+
+    /// Text from another note goes in as it was. Rich text from anywhere
+    /// else comes in the note's own style (see `NoteDocument.pasted`): a
+    /// Reddit post came in with the page's grey background behind every
+    /// line, its fonts, and two bullets on every list item.
+    override func readSelection(from pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        let incoming: NSAttributedString?
+        if type == Self.noteTextType {
+            incoming = pboard.data(forType: type).flatMap(NoteDocument.unarchive)
+        } else if Self.richTypes.contains(type), let data = pboard.data(forType: type) {
+            incoming = Self.attributedString(from: data, type: type).map(NoteDocument.pasted)
+        } else {
+            return super.readSelection(from: pboard, type: type)
+        }
+        guard let incoming, let storage = textStorage else { return super.readSelection(from: pboard, type: type) }
+        let range = rangeForUserTextChange
+        guard range.location != NSNotFound, shouldChangeText(in: range, replacementString: incoming.string) else {
+            return false
+        }
+        storage.replaceCharacters(in: range, with: incoming)
+        didChangeText()
+        setSelectedRange(NSRange(location: range.location + incoming.length, length: 0))
+        undoManager?.setActionName("Paste")
+        return true
+    }
+
+    private static func attributedString(from data: Data, type: NSPasteboard.PasteboardType) -> NSAttributedString? {
+        let documentType: NSAttributedString.DocumentType
+        switch type {
+        case .rtf: documentType = .rtf
+        case .html: documentType = .html
+        case NSPasteboard.PasteboardType("com.apple.webarchive"): documentType = .webArchive
+        default: documentType = .rtfd
+        }
+        var options: [NSAttributedString.DocumentReadingOptionKey: Any] = [.documentType: documentType]
+        if documentType == .html { options[.characterEncoding] = String.Encoding.utf8.rawValue }
+        return try? NSAttributedString(data: data, options: options, documentAttributes: nil)
+    }
+
     override func mouseDown(with event: NSEvent) {
         guard let storage = textStorage, let window else { return super.mouseDown(with: event) }
         let point = convert(event.locationInWindow, from: nil)
@@ -1075,10 +1201,15 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView()
         let textView = Self.makeTextView(controller: controller, coordinator: context.coordinator,
                                          text: attributed)
+        return Self.makeScrollView(around: textView, column: column)
+    }
 
+    /// The scroll view as the editor sets it up, with the text view in its
+    /// document; separate so tests can drive the real configuration.
+    static func makeScrollView(around textView: NoteTextView, column: TextColumn) -> NSScrollView {
+        let scroll = NSScrollView()
         let document = NoteDocumentView(textView: textView)
         document.column = column
         scroll.documentView = document
@@ -1086,7 +1217,7 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.automaticallyAdjustsContentInsets = false
-        // The scroll bar stops above the round assistant button in the
+        // The scroll bar stops above the assistant's pill in the
         // corner. (The last lines get room below them from the document
         // itself: a content inset there swallowed clicks on the text behind it.)
         scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 76, right: 0)
@@ -1150,6 +1281,11 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
         /// Whatever SwiftUI passes back that is one of these is already in
         /// the text view, however late it arrives.
         private let known = NSHashTable<NSAttributedString>(options: [.weakMemory, .objectPointerPersonality])
+        /// This note's own undo history. The window's is shared with every
+        /// field in it and outlives the note, and its steps are ranges in the
+        /// text as it was: once the note is replaced from outside — sync, a
+        /// sticky — they pointed past its end, and Cmd-Z threw.
+        let undoManager = UndoManager()
         /// Set when an undo or redo has changed the text and not yet been told.
         private var undoneUnsaved = false
         nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
@@ -1159,6 +1295,8 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
         deinit {
             for observer in observers { NotificationCenter.default.removeObserver(observer) }
         }
+
+        func undoManager(for view: NSTextView) -> UndoManager? { undoManager }
 
         /// Under TextKit 2 an undo or redo changes the text without posting
         /// didChange, so it would show but never be saved. The storage still
@@ -1170,22 +1308,18 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
                 forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil
             ) { [weak self, weak textView] _ in
                 MainActor.assumeIsolated {
-                    guard let self, let undo = textView?.undoManager, undo.isUndoing || undo.isRedoing,
+                    guard let self, self.undoManager.isUndoing || self.undoManager.isRedoing,
                           let mask = textView?.textStorage?.editedMask,
                           !mask.intersection([.editedCharacters, .editedAttributes]).isEmpty else { return }
                     self.undoneUnsaved = true
                 }
             })
-            // The window's undo manager is only known once the view is in one,
-            // and is shared with its other fields: filter rather than bind.
             for name in [NSNotification.Name.NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange] {
                 observers.append(NotificationCenter.default.addObserver(
-                    forName: name, object: nil, queue: nil
-                ) { [weak self, weak textView] note in
-                    let sender = (note.object as AnyObject?).map(ObjectIdentifier.init)
+                    forName: name, object: undoManager, queue: nil
+                ) { [weak self, weak textView] _ in
                     MainActor.assumeIsolated {
-                        guard let self, let textView, self.undoneUnsaved,
-                              sender != nil, sender == textView.undoManager.map(ObjectIdentifier.init) else { return }
+                        guard let self, let textView, self.undoneUnsaved else { return }
                         self.publish(textView)
                     }
                 })
@@ -1210,6 +1344,9 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
             if textView.hasMarkedText() { textView.unmarkText() }
             let selected = textView.selectedRange()
             storage.setAttributedString(text)
+            // Not an edit that can be undone, and the steps before it no
+            // longer fit the text.
+            undoManager.removeAllActions()
             // NSRange counts UTF-16 units; String.count counts characters, and
             // the two differ as soon as a note contains an emoji.
             textView.setSelectedRange(NSRange(location: min(selected.location, storage.length), length: 0))
@@ -1285,6 +1422,8 @@ final class NoteDocumentView: NSView {
     var column = TextColumn() { didSet { needsLayout = true } }
     /// Room after the last line, so it can scroll clear of the assistant button.
     let bottomRoom: CGFloat = 88
+    /// The header's height at the last layout pass.
+    private var headerHeight: CGFloat = 0
     nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
     override var isFlipped: Bool { true }
@@ -1321,7 +1460,7 @@ final class NoteDocumentView: NSView {
         super.layout()
         guard let clip = enclosingScrollView?.contentView else { return }
         let width = clip.bounds.width
-        let headerHeight = ceil(header.sizeThatFits(in: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)).height)
+        headerHeight = ceil(header.sizeThatFits(in: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)).height)
         header.view.frame = NSRect(x: 0, y: 0, width: width, height: headerHeight)
 
         // The text sits in the same column as the title above it.
@@ -1340,5 +1479,14 @@ final class NoteDocumentView: NSView {
         if abs(frame.width - width) > 0.5 || abs(frame.height - height) > 0.5 {
             setFrameSize(NSSize(width: width, height: height))
         }
+    }
+
+    /// Makes the page as long as the text now, rather than at the next
+    /// layout pass — between the two, a new last line had nowhere to scroll to.
+    func fitToText() {
+        guard frame.width > 0 else { return }
+        textView.sizeToFit()
+        let height = headerHeight + textView.frame.height + bottomRoom
+        if abs(frame.height - height) > 0.5 { setFrameSize(NSSize(width: frame.width, height: height)) }
     }
 }

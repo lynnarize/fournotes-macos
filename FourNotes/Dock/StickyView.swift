@@ -200,6 +200,11 @@ struct StickySheet: View {
 
     @State private var text = ""
     @State private var title = ""
+    /// The text and title as this sticky last read or wrote them. What
+    /// differs from them was typed here; a newer version in the note was
+    /// written elsewhere, and is not this sticky's to save back.
+    @State private var base = ""
+    @State private var titleBase = ""
     @State private var loaded = false
     /// Whether the text has the keyboard; set to give it the keyboard.
     @State private var editing = false
@@ -276,15 +281,19 @@ struct StickySheet: View {
         .onChange(of: text) { _, _ in scheduleSave() }
         .onChange(of: title) { _, _ in scheduleSave() }
         .onChange(of: note?.content) { _, content in
-            // Changed somewhere else — in the app, by the assistant — while
-            // this one wasn't being typed in.
-            guard !editing, pendingSave == nil, let content, content != text else { return }
+            // Changed somewhere else — in the app, by the assistant — with
+            // nothing typed here waiting to be saved. Held back while this
+            // one merely had the keyboard, it was then saved back over the
+            // newer text, as soon as the sticky was minimized.
+            guard let content, content != text, text == base else { return }
             text = content
+            base = content
         }
         .onChange(of: note?.title) { _, _ in
-            guard !titleFocused, pendingSave == nil, let note else { return }
+            guard !titleFocused, title == titleBase, let note else { return }
             let shown = Self.autoTitled(note) ? "" : note.title
             if shown != title { title = shown }
+            titleBase = shown
         }
         .onDisappear {
             if pendingSave != nil { commit() }
@@ -518,11 +527,15 @@ struct StickySheet: View {
         guard !loaded, let note else { return }
         loaded = true
         text = note.content
+        base = text
         title = Self.autoTitled(note) ? "" : note.title
+        titleBase = title
     }
 
     private func scheduleSave() {
-        guard loaded, let note, text != note.content || nextTitle(note) != note.title else { return }
+        guard loaded, let note,
+              text != note.content || nextTitle(note, content: editable ? text : note.content) != note.title
+        else { return }
         pendingSave?.cancel()
         PendingWrites.hold(writeId) { commit() }
         pendingSave = Task { @MainActor in
@@ -533,10 +546,10 @@ struct StickySheet: View {
     }
 
     /// The title to save: what's typed — or, for a quick note left without
-    /// one, its first line.
-    private func nextTitle(_ note: Note) -> String {
+    /// one, the first line of `content`.
+    private func nextTitle(_ note: Note, content: String) -> String {
         let typed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if typed.isEmpty, QuickNote.isQuick(note) { return QuickNote.title(for: editable ? text : note.content) }
+        if typed.isEmpty, QuickNote.isQuick(note) { return QuickNote.title(for: content) }
         return typed == note.title.trimmingCharacters(in: .whitespacesAndNewlines) ? note.title : typed
     }
 
@@ -545,13 +558,19 @@ struct StickySheet: View {
         pendingSave?.cancel()
         pendingSave = nil
         guard loaded, let note else { return }
-        let content = editable ? text : note.content
-        let next = nextTitle(note)
+        // Only what was typed here.
+        let typed = editable && text != base
+        let content = typed ? text : note.content
+        // A quick note left without a title follows its first line.
+        let autoTitled = QuickNote.isQuick(note) && title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let next = title != titleBase || autoTitled ? nextTitle(note, content: content) : note.title
         guard content != note.content || next != note.title else { return }
         store.updateNote(noteId) {
             $0.content = content
             $0.title = next
         }
+        if typed { base = text }
+        titleBase = title
     }
 }
 

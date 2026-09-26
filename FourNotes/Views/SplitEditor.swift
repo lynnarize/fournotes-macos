@@ -42,7 +42,7 @@ struct SplitEditor: View {
                         addPeople(tx: tx, splits: splits)
                     }
                     Toggle("incl. me", isOn: $includeMe)
-                        .toggleStyle(.checkbox)
+                        .toggleStyle(.fnCheckbox)
                         .font(FN.small)
                         .foregroundStyle(p.muted)
                     SecondaryButton(title: "Split equally") { addPeople(tx: tx, splits: splits) }
@@ -76,7 +76,7 @@ struct SplitEditor: View {
                     next[index].settled = settled
                     store.updateTransaction(tx.id) { $0.splits = next }
                 }))
-                .toggleStyle(.checkbox)
+                .toggleStyle(.fnCheckbox)
                 .labelsHidden()
                 .accessibilityLabel("\(split.name) paid")
 
@@ -187,8 +187,6 @@ struct AmountField: View {
 
 /// The split editor as a sheet, used from the chat dock and Finance.
 struct SplitEditorSheet: View {
-    @Environment(\.palette) private var p
-    @Environment(\.dismiss) private var dismiss
     let txId: String
 
     var body: some View {
@@ -198,35 +196,67 @@ struct SplitEditorSheet: View {
     }
 }
 
-/// The app's modal chrome: a title bar that stays put while the content scrolls.
-struct SheetFrame<Content: View>: View {
+/// The app's modal chrome, as the web app's Modal: a title bar that stays put
+/// while the content scrolls, with room for extra buttons beside Close. The
+/// dialog is as tall as its content, up to `maxHeight` or 80% of the window.
+struct SheetFrame<Content: View, Actions: View>: View {
     @Environment(\.palette) private var p
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.closeModal) private var closeModal
+    @Environment(\.modalMaxHeight) private var windowLimit
     let title: String
     var width: CGFloat = 520
     var maxHeight: CGFloat = 640
+    @ViewBuilder var actions: () -> Actions
     @ViewBuilder var content: () -> Content
+    @State private var contentHeight: CGFloat = 0
+
+    init(title: String, width: CGFloat = 520, maxHeight: CGFloat = 640,
+         @ViewBuilder actions: @escaping () -> Actions,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.title = title; self.width = width; self.maxHeight = maxHeight
+        self.actions = actions; self.content = content
+    }
+
+    private static var headerHeight: CGFloat { 49 }
 
     var body: some View {
+        let limit = min(maxHeight, windowLimit ?? maxHeight) - Self.headerHeight
         VStack(spacing: 0) {
-            HStack {
-                Text(title).font(FN.serif(19)).foregroundStyle(p.text)
-                Spacer()
-                IconButton("x", size: 18, box: 30, help: "Close") { dismiss() }
+            HStack(spacing: 2) {
+                Text(title)
+                    .font(FN.font(16, .semibold))
+                    .foregroundStyle(p.text)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                actions()
+                IconButton("x", size: 18, box: 32, help: "Close") {
+                    if let closeModal { closeModal() } else { dismiss() }
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            Divider().overlay(p.line)
+            .padding(.leading, 16)
+            .padding(.trailing, 8)
+            .frame(height: Self.headerHeight - 1)
+            Rectangle().fill(p.line).frame(height: 1)
 
             ScrollView {
                 content()
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
             }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: contentHeight == 0 ? nil : min(contentHeight, limit))
         }
         .frame(width: width)
-        .frame(maxHeight: maxHeight)
+        .frame(maxHeight: min(maxHeight, windowLimit ?? maxHeight))
         .background(p.bg)
-        .entrance()
+    }
+}
+
+extension SheetFrame where Actions == EmptyView {
+    init(title: String, width: CGFloat = 520, maxHeight: CGFloat = 640,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.init(title: title, width: width, maxHeight: maxHeight, actions: { EmptyView() }, content: content)
     }
 }

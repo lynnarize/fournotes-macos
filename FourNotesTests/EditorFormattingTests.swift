@@ -308,13 +308,14 @@ struct EditorFormattingTests {
 
     // MARK: - Inline tools
 
-    @Test("⌘B, ⌘I and ⌘U format the text")
-    func keyboardShortcuts() throws {
+    @Test("⌘B, ⌘I and ⌘U format the text, Caps Lock on or off",
+          arguments: [NSEvent.ModifierFlags.command, [.command, .capsLock]])
+    func keyboardShortcuts(_ flags: NSEvent.ModifierFlags) throws {
         let e = Editor("Hello")
         e.select(0, 5)
         for (key, code) in [("b", 11), ("i", 34), ("u", 32)] as [(String, UInt16)] {
             let event = try #require(NSEvent.keyEvent(
-                with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
                 windowNumber: e.window.windowNumber, context: nil, characters: key,
                 charactersIgnoringModifiers: key, isARepeat: false, keyCode: code))
             #expect(e.textView.performKeyEquivalent(with: event), "⌘\(key.uppercased()) went unhandled")

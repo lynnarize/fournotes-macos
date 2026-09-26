@@ -422,3 +422,97 @@ struct CommittedField: View {
         if draft != value { onCommit(draft) }
     }
 }
+
+// MARK: - Checkbox
+
+/// The web app's checkbox: a small rounded square that fills with the accent
+/// and a white check when on. Replaces AppKit's `.checkbox`.
+struct FNCheckboxStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        FNCheckbox(configuration: configuration)
+    }
+}
+
+private struct FNCheckbox: View {
+    @Environment(\.palette) private var p
+    @Environment(\.isEnabled) private var enabled
+    @State private var hovering = false
+    let configuration: ToggleStyleConfiguration
+
+    var body: some View {
+        let on = configuration.isOn
+        Button { configuration.isOn.toggle() } label: {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(on ? p.accent : p.bg)
+                    .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(on ? p.accent : (hovering ? p.muted : p.faint.opacity(0.7)), lineWidth: 1))
+                    .overlay {
+                        if on {
+                            Icon("check", size: 11)
+                                .foregroundStyle(.white)
+                                .transition(.scale(scale: 0.5).combined(with: .opacity))
+                        }
+                    }
+                    .frame(width: 15, height: 15)
+                    .motion(on, Motion.quick)
+                configuration.label
+            }
+            .opacity(enabled ? 1 : 0.5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+        }
+    }
+}
+
+extension ToggleStyle where Self == FNCheckboxStyle {
+    static var fnCheckbox: FNCheckboxStyle { FNCheckboxStyle() }
+}
+
+// MARK: - Stepper
+
+/// A number with − and + beside it, in place of AppKit's stepper arrows.
+struct NumberStepper: View {
+    @Environment(\.palette) private var p
+    @Binding var value: Int
+    var range: ClosedRange<Int>
+
+    var body: some View {
+        HStack(spacing: 0) {
+            step("minus", -1)
+            Text("\(value)")
+                .font(FN.body)
+                .monospacedDigit()
+                .foregroundStyle(p.text)
+                .frame(minWidth: 26)
+                .contentTransition(.numericText())
+            step("plus", 1)
+        }
+        .frame(height: 28)
+        .overlay(RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous).stroke(p.line, lineWidth: 1))
+        .accessibilityElement()
+        .accessibilityValue("\(value)")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: change(1)
+            case .decrement: change(-1)
+            @unknown default: break
+            }
+        }
+    }
+
+    private func step(_ icon: String, _ delta: Int) -> some View {
+        IconButton(icon, size: 12, box: 26, help: delta > 0 ? "More" : "Fewer") { change(delta) }
+            .disabled(!range.contains(value + delta))
+            .opacity(range.contains(value + delta) ? 1 : 0.4)
+    }
+
+    private func change(_ delta: Int) {
+        let next = min(range.upperBound, max(range.lowerBound, value + delta))
+        if next != value { withAnimation(Motion.quick) { value = next } }
+    }
+}

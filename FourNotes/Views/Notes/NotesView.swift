@@ -354,6 +354,10 @@ struct NotesView: View {
 
     /// Leaving a note you never wrote in discards it, so "New note" doesn't pile up blanks.
     private func leave(_ nextId: String?) {
+        // What was typed a moment ago may still be waiting out its debounce:
+        // write it first, or a new note typed in and left at once was deleted
+        // as blank, and its text saved into the deleted note.
+        PendingWrites.flushAll()
         guard let current = nav.selectedNoteId, current != nextId,
               let note = liveNotes.first(where: { $0.id == current }), isBlank(note) else { return }
         store.remove(.notes, note.id)

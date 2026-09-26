@@ -211,7 +211,9 @@ struct TaskPanel: View {
 
             prop("repeat", "Repeat") {
                 HStack(spacing: 8) {
-                    Picker("", selection: Binding(
+                    SelectMenu(options: [("", "Doesn't repeat"), ("DAILY", "Daily"), ("WEEKLY", "Weekly"),
+                                         ("MONTHLY", "Monthly"), ("YEARLY", "Yearly")],
+                               selection: Binding(
                         get: { rule?.freq.rawValue ?? "" },
                         set: { raw in
                             store.updateTodo(todo.id) {
@@ -219,19 +221,12 @@ struct TaskPanel: View {
                                     : recurrence(freq: Freq(rawValue: raw) ?? .MONTHLY,
                                                  interval: rule?.interval ?? 1)
                             }
-                        })) {
-                            Text("Doesn't repeat").tag("")
-                            Text("Daily").tag("DAILY")
-                            Text("Weekly").tag("WEEKLY")
-                            Text("Monthly").tag("MONTHLY")
-                            Text("Yearly").tag("YEARLY")
-                        }
-                        .labelsHidden()
+                        }))
                         .fixedSize()
 
                     if let rule {
                         Text("every").font(FN.body).foregroundStyle(p.muted)
-                        Stepper(value: Binding(
+                        NumberStepper(value: Binding(
                             get: { rule.interval },
                             set: { newValue in
                                 store.updateTodo(todo.id) {
@@ -239,9 +234,7 @@ struct TaskPanel: View {
                                                           interval: max(1, newValue))
                                 }
                             }
-                        ), in: 1...99) {
-                            Text("\(rule.interval)").font(FN.body).monospacedDigit()
-                        }
+                        ), range: 1...99)
                         .transition(.opacity.combined(with: .offset(x: -6)))
                     }
                 }
@@ -249,14 +242,10 @@ struct TaskPanel: View {
             }
 
             prop("flag", "Priority") {
-                Picker("", selection: Binding(
+                SelectMenu(options: [(Priority.high, "High"), (Priority.medium, "Medium"), (Priority.low, "Low")],
+                           selection: Binding(
                     get: { todo.priority },
-                    set: { value in store.updateTodo(todo.id) { $0.priority = value } })) {
-                        Text("High").tag(Priority.high)
-                        Text("Medium").tag(Priority.medium)
-                        Text("Low").tag(Priority.low)
-                    }
-                    .labelsHidden()
+                    set: { value in store.updateTodo(todo.id) { $0.priority = value } }))
                     .fixedSize()
             }
 
@@ -281,16 +270,12 @@ struct TaskPanel: View {
                     .help("Logs the spending when the task is done")
 
                     if let bill = todo.bill {
-                        Picker("", selection: Binding(
+                        SelectMenu(options: store.categories.filter { $0 != "Income" }.map { ($0, $0) },
+                                   selection: Binding(
                             get: { bill.category },
                             set: { category in
                                 store.updateTodo(todo.id) { $0.bill?.category = category }
-                            })) {
-                                ForEach(store.categories.filter { $0 != "Income" }, id: \.self) { c in
-                                    Text(c).tag(c)
-                                }
-                            }
-                            .labelsHidden()
+                            }))
                             .fixedSize()
                             .transition(.opacity.combined(with: .offset(x: -6)))
                     }
@@ -300,15 +285,11 @@ struct TaskPanel: View {
 
             prop("link", "Note") {
                 HStack(spacing: 8) {
-                    Picker("", selection: Binding(
+                    SelectMenu(options: [("", "Empty")] + store.liveNotes.map { ($0.id, $0.title.isEmpty ? "Untitled" : $0.title) },
+                               selection: Binding(
                         get: { todo.noteId ?? "" },
-                        set: { id in store.updateTodo(todo.id) { $0.noteId = id.isEmpty ? nil : id } })) {
-                            Text("Empty").tag("")
-                            ForEach(store.liveNotes) { n in
-                                Text(n.title.isEmpty ? "Untitled" : n.title).tag(n.id)
-                            }
-                        }
-                        .labelsHidden()
+                        set: { id in store.updateTodo(todo.id) { $0.noteId = id.isEmpty ? nil : id } }))
+                        .frame(maxWidth: 240, alignment: .leading)
 
                     if let note {
                         Button("Open") { nav.open(ChangeLink(kind: .notes, id: note.id)) }

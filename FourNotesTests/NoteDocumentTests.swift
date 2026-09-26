@@ -89,15 +89,18 @@ struct NoteDocumentTests {
 
     @Test("toggling a checkbox changes what the rest of the app reads")
     func togglingUpdatesPlainText() throws {
-        let document = NoteDocument.attributed(fromPlainText: "☐ Buy groceries")
-        let checkbox = try #require(NoteDocument.firstCheckbox(in: document))
-        checkbox.isChecked = true
+        let document = NSMutableAttributedString(attributedString:
+            NoteDocument.attributed(fromPlainText: "☐ Buy groceries"))
+        // As the editor ticks one: a ticked box in its place.
+        document.addAttribute(.attachment, value: CheckboxAttachment(checked: true),
+                              range: NSRange(location: 0, length: 1))
         #expect(NoteDocument.plainText(from: document) == "☑ Buy groceries")
     }
 
     @Test("the native archive keeps checkboxes and lists")
     func archiveRoundTrip() throws {
-        let text = "☐ Buy groceries\n• Bandung\n# Heading"
+        // A ticked box too: decoding used to untick every one.
+        let text = "☐ Buy groceries\n☑ Book dentist\n• Bandung\n# Heading"
         let original = NoteDocument.attributed(fromPlainText: text)
         let data = try #require(NoteDocument.archive(original))
         let restored = try #require(NoteDocument.unarchive(data))
@@ -176,6 +179,43 @@ struct NoteDocumentTests {
     @Test("plain body text still needs no archive")
     func plainNeedsNoArchive() {
         #expect(!NoteDocument.hasInlineFormatting(NoteDocument.attributed(fromPlainText: "• Just a list")))
+    }
+
+    @Test("headings, dividers and quotes need no archive either", arguments: [
+        "# Trip\nPack light", "## Days\nMonday", "### Small print\nText", "Above\n---\nBelow", "> Quoted",
+    ])
+    @MainActor
+    func structureNeedsNoArchive(_ text: String) {
+        // A heading is bold and a divider centred and faint, and both counted
+        // as formatting: every such note was kept in the rich form, which the
+        // edge stickies won't edit.
+        let opened = NoteEditorView.document(for: Note(id: "n", createdAt: "", updatedAt: "", content: text))
+        #expect(!NoteDocument.hasInlineFormatting(opened))
+    }
+
+    @Test("what a heading's line can't say is still formatting")
+    func headingFormatting() {
+        let manager = NSFontManager.shared
+        let heading = NoteDocument.headingFont(1)
+        func document(_ text: String, font: NSFont, on range: NSRange) -> NSAttributedString {
+            let out = NSMutableAttributedString(attributedString: NoteDocument.attributed(fromPlainText: text))
+            out.addAttribute(.font, value: font, range: range)
+            return out
+        }
+        // One word in italics comes back upright.
+        #expect(NoteDocument.hasInlineFormatting(document("# Trip plans\nBody",
+            font: manager.convert(heading, toHaveTrait: .italicFontMask), on: NSRange(location: 0, length: 4))))
+        // A list item is written "•", not "#": the heading's face is lost.
+        #expect(NoteDocument.hasInlineFormatting(document("• Big item", font: heading,
+                                                          on: NSRange(location: 0, length: 8))))
+        // So is a heading's face on words in an ordinary line.
+        #expect(NoteDocument.hasInlineFormatting(document("Some big words", font: heading,
+                                                          on: NSRange(location: 5, length: 3))))
+        let centred = NSMutableAttributedString(attributedString: NoteDocument.attributed(fromPlainText: "# Title"))
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        centred.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: centred.length))
+        #expect(NoteDocument.hasInlineFormatting(centred))
     }
 }
 

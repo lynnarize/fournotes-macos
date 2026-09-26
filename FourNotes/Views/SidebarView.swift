@@ -12,6 +12,7 @@ struct SidebarView: View {
     @EnvironmentObject private var nav: Navigation
     @EnvironmentObject private var assistant: Assistant
     @ObservedObject private var servers = LocalServers.shared
+    @ObservedObject private var updates = UpdateCheck.shared
 
     private var counts: [Tab: Int] {
         let month = DateKit.localMonth()
@@ -64,7 +65,17 @@ struct SidebarView: View {
             }
             .padding(.bottom, 8)
 
-            SidebarCard(icon: "settings", title: "Settings") { nav.present(.settings) }
+            // Where your data is kept in step, as the web sidebar shows it.
+            if AppModel.shared.sync.isAvailable {
+                SyncStatusRow(sync: AppModel.shared.sync)
+                    .padding(.bottom, 2)
+            }
+
+            SidebarCard(icon: "settings", title: "Settings",
+                        badge: updates.hasUnseenUpdate ? "A new version is available" : nil) {
+                // With a new version waiting, open where it can be downloaded.
+                if updates.hasUnseenUpdate { nav.openSettings(section: "about") } else { nav.present(.settings) }
+            }
         }
         .padding(.horizontal, 14)
         .padding(.top, 14)
@@ -313,6 +324,9 @@ private struct SidebarCard: View {
     let title: String
     var tone: Color?
     var disabled = false
+    /// Puts a small dot on the icon; the text says why, for VoiceOver and
+    /// the tooltip.
+    var badge: String?
     let action: () -> Void
 
     var body: some View {
@@ -320,6 +334,17 @@ private struct SidebarCard: View {
             SidebarCardBody { hovering in
                 HStack(spacing: 12) {
                     Icon(icon, size: 18).foregroundStyle(tone ?? (hovering ? p.text : p.muted))
+                        .overlay(alignment: .topTrailing) {
+                            if badge != nil {
+                                Circle()
+                                    .fill(p.danger)
+                                    .frame(width: 8, height: 8)
+                                    .overlay(Circle().stroke(p.panel, lineWidth: 1.5))
+                                    .offset(x: 3, y: -2)
+                                    .transition(.scale(scale: 0.2).combined(with: .opacity))
+                            }
+                        }
+                        .animation(Motion.standard, value: badge != nil)
                     Text(title).font(FN.font(14))
                     Spacer(minLength: 0)
                 }
@@ -332,7 +357,9 @@ private struct SidebarCard: View {
         .disabled(disabled)
         .opacity(disabled ? 0.5 : 1)
         .motion(disabled, Motion.quick)
+        .help(badge ?? "")
         .accessibilityLabel(title)
+        .accessibilityValue(badge ?? "")
     }
 }
 
@@ -411,5 +438,64 @@ extension Tab {
         case .todo: return "todo"
         case .finance: return "finance"
         }
+    }
+}
+
+/// Sync at a glance: a cloud, green once synced, red on an error, with the
+/// state beside it. Opens Settings at Sync.
+private struct SyncStatusRow: View {
+    @Environment(\.palette) private var p
+    @EnvironmentObject private var nav: Navigation
+    @ObservedObject var sync: GoogleSync
+    @State private var hovering = false
+
+    private var label: String {
+        guard sync.account != nil else { return "Turn on sync" }
+        switch sync.status {
+        case .syncing: return "Syncing… · Google Drive"
+        case .offline: return "Offline · Google Drive"
+        case .error: return "Sync error · Google Drive"
+        case .synced: return "Synced · Google Drive"
+        case .idle: return sync.lastSynced == nil ? "Not synced yet · Google Drive" : "Synced · Google Drive"
+        }
+    }
+
+    private var tone: Color {
+        guard sync.account != nil else { return p.faint }
+        switch sync.status {
+        case .error: return p.danger
+        case .synced: return p.ok
+        case .idle: return sync.lastSynced == nil ? p.faint : p.ok
+        case .syncing, .offline: return p.faint
+        }
+    }
+
+    private var help: String {
+        if sync.status == .error, let message = sync.message { return message }
+        if let last = sync.lastSynced { return "Last synced \(last.formatted(.relative(presentation: .named)))" }
+        return "Keep this Mac and the web app in step through Google Drive"
+    }
+
+    var body: some View {
+        Button { nav.openSettings(section: "sync") } label: {
+            HStack(spacing: 8) {
+                Icon("cloud", size: 13)
+                    .foregroundStyle(tone)
+                    .opacity(sync.status == .syncing ? 0.6 : 1)
+                    .motion(sync.status, Motion.quick)
+                Text(label).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            .font(FN.small)
+            .foregroundStyle(hovering ? p.muted : p.faint)
+            .padding(.horizontal, 14)
+            .frame(height: 30)
+            .background(hovering ? p.hover : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.fn)
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityLabel(label)
     }
 }

@@ -70,7 +70,8 @@ Four Notes server in between.
 - API keys are kept in the macOS Keychain, never in that file or a backup.
 - No Four Notes account, analytics, tracking or ads. Besides a cloud AI model
   you add yourself, the app only goes online to look up exchange rates
-  (currency codes only), when you ask, to check GitHub for a newer release,
+  (currency codes only), once a day (or when you ask) to check GitHub for a
+  newer release — Settings → About turns the daily check off —
   and, if you turn it on, to sync with Google Drive.
 - **Sync** (optional, Settings → Sync): sign in with Google and your notes,
   to-dos, spending and sticky notes are kept in step with the web app at
@@ -153,7 +154,10 @@ Anyway**). A Developer ID signature and notarization remove that step.
 ```
 
 Settings → About → **Check for updates** compares the running version with
-the latest GitHub release.
+the latest GitHub release. The app also checks on its own once a day (30
+seconds after launch, then whenever a day has passed), using a conditional
+request so an unchanged release costs nothing against GitHub's rate limit. A
+newer version puts a dot on Settings in the sidebar until Settings is opened.
 
 ## Tests
 
