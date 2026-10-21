@@ -423,6 +423,11 @@ final class Assistant: ObservableObject {
             return
         }
 
+        // Whisper, when it's downloaded, writes a better transcript than the live one,
+        // and with the speaker model says who said what. Apple's live words stay the fallback.
+        var transcript = transcript
+        if let url, let local = await localTranscript(of: url) { transcript = local }
+
         messages.append(UIMessage(role: .user,
                                   content: transcript.isEmpty ? "Recorded a voice note" : transcript))
         do {
@@ -439,6 +444,22 @@ final class Assistant: ObservableObject {
             if let first = applied.created.first { nav.open(first) }
         } catch {
             messages.append(UIMessage(role: .assistant, content: message(for: error), isError: true))
+        }
+    }
+
+    /// The recording transcribed with Whisper on this Mac, or nil to keep the live transcript
+    /// (Whisper not downloaded, turned off in Settings, or it couldn't make anything of it).
+    private func localTranscript(of url: URL) async -> String? {
+        let models = SpeechModels.shared
+        guard models.useForRecordings, models.isInstalled(SpeechModels.whisper) else { return nil }
+        let speakers = models.isInstalled(SpeechModels.speakers) ? models.folder(SpeechModels.speakers) : nil
+        busy = speakers == nil ? "Transcribing on this Mac…" : "Transcribing and telling voices apart…"
+        defer { busy = "Writing it up…" }
+        do {
+            return try await LocalSpeech.transcribe(url, whisperFolder: models.folder(SpeechModels.whisper), speakersFolder: speakers).text
+        } catch {
+            toasts.push("Whisper couldn't transcribe that one, so the live transcript is used. \(error.localizedDescription)", tone: .error)
+            return nil
         }
     }
 

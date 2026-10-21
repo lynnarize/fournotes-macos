@@ -25,6 +25,12 @@ default, and useful with no account, no key and no network.
   question needs the internet.
 - **Scan and record** — a receipt photo becomes spending; a voice memo becomes
   a note with its to-dos. Text is read and speech transcribed on this Mac.
+- **Speech models** — download Whisper large-v3 turbo (about 630 MB, 99
+  languages, Indonesian included) and a speaker model (33 MB) from Hugging Face
+  inside the app, in Settings → AI & API keys → Speech models: size, speed and
+  time left, pause, resume (even after quitting), cancel and delete. Recordings
+  are then transcribed with Whisper, with who said what, offline. Runs on
+  [WhisperKit and SpeakerKit](https://github.com/argmaxinc/argmax-oss-swift).
 - **Edge Dock** — a small handle on the edge of the screen, over any app and
   any Space, that opens a drawer of mini apps: quick note, today's tasks,
   dictation with a live level meter, a one-line spend, what's coming up, and
