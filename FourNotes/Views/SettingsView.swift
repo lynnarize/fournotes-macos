@@ -23,6 +23,7 @@ struct SettingsView: View {
     @ObservedObject private var stickies = EdgeStickies.shared
     @ObservedObject private var updates = UpdateCheck.shared
     @ObservedObject private var sync = AppModel.shared.sync
+    @ObservedObject private var speech = SpeechModels.shared
     @Environment(\.palette) private var p
     @Environment(\.dismiss) private var dismiss
     @Environment(\.closeModal) private var closeModal
@@ -40,7 +41,7 @@ struct SettingsView: View {
     @AppStorage("fournotes.settings.section") private var current = "appearance"
     @State private var confirmWipe = false
     @State private var wipeConfirmation = ""
-    /// Which of "On this Mac" / "In the cloud" is unfolded.
+    /// Which of "On this Mac" / "In the cloud" / "Speech models" is unfolded.
     @State private var openGroup: String?
     /// Bumped by "Forget all keys" so the provider editors reload.
     @State private var keysGeneration = 0
@@ -607,6 +608,9 @@ struct SettingsView: View {
                     CloudProviderTabs { anthropicKey }.id(keysGeneration)
                     Divider().overlay(p.line)
                     forgetKeys
+                }
+                modelGroup("speech", icon: "mic", title: "Speech models", summary: speech.summary) {
+                    SpeechModelsSettings()
                 }
             }
         }

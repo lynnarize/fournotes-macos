@@ -39,9 +39,24 @@ struct RichTextState: Equatable {
     var inList: Bool { isBulletList || isNumberedList || isChecklist }
 }
 
+/// The "/" menu while it's open: where the "/" is, what follows it, and where
+/// the caret is in the window (top-left origin), for placing the card.
+struct SlashState: Equatable {
+    var from: Int
+    var query: String
+    var caret: CGRect
+    var active = 0
+    var commands: [SlashCommand] { SlashCommand.matching(query) }
+}
+
 @MainActor
 final class RichTextController: ObservableObject {
     @Published var state = RichTextState()
+    @Published var slash: SlashState?
+    /// What a picked "/" command does: the editor knows the note and the store.
+    var onSlash: ((SlashCommand) -> Void)?
+    /// A "/" the user closed with Escape: not offered again until typing moves on.
+    private var dismissedSlash: Int?
     fileprivate weak var textView: NSTextView?
 
     func focus() { textView?.window?.makeFirstResponder(textView) }
@@ -594,6 +609,104 @@ final class RichTextController: ObservableObject {
                                             : tv.typingAttributes,
                                         in: paragraph)
         }
+        refreshState()
+    }
+
+    // MARK: - The "/" menu
+
+    /// Opens, narrows or closes the menu from the text before the caret.
+    func detectSlash() {
+        guard let tv = textView, tv.selectedRange().length == 0, !tv.hasMarkedText() else { return closeSlash() }
+        let caret = tv.selectedRange().location
+        let text = tv.string as NSString
+        let line = text.paragraphRange(for: NSRange(location: caret, length: 0))
+        let before = text.substring(with: NSRange(location: line.location, length: caret - line.location))
+        // At the start of a line (a checkbox counts as the start), or after a space.
+        guard let match = before.range(of: #"(^|[\s\x{FFFC}])/([\w-]{0,14})$"#, options: .regularExpression),
+              let slashAt = before[match].lastIndex(of: "/") else { return closeSlash() }
+        let query = String(before[before.index(after: slashAt)...])
+        let from = caret - (query as NSString).length - 1
+        guard from != dismissedSlash else { return }
+        dismissedSlash = nil
+        guard !SlashCommand.matching(query).isEmpty, let window = tv.window, let content = window.contentView else { return closeSlash() }
+        var actual = NSRange()
+        let onScreen = tv.firstRect(forCharacterRange: NSRange(location: caret, length: 0), actualRange: &actual)
+        let inWindow = window.convertFromScreen(onScreen)
+        let caretRect = CGRect(x: inWindow.minX, y: content.bounds.height - inWindow.maxY,
+                               width: max(1, inWindow.width), height: max(14, inWindow.height))
+        let active = slash?.from == from ? min(slash?.active ?? 0, SlashCommand.matching(query).count - 1) : 0
+        slash = SlashState(from: from, query: query, caret: caretRect, active: max(0, active))
+    }
+
+    func closeSlash() {
+        if slash != nil { slash = nil }
+        dismissedSlash = nil
+    }
+
+    /// Escape: closes the menu and leaves the "/" as typed.
+    func dismissSlash() {
+        dismissedSlash = slash?.from
+        slash = nil
+    }
+
+    func moveSlash(_ delta: Int) {
+        guard var s = slash, !s.commands.isEmpty else { return }
+        s.active = (s.active + delta + s.commands.count) % s.commands.count
+        slash = s
+    }
+
+    func hoverSlash(_ index: Int) {
+        guard var s = slash, s.commands.indices.contains(index) else { return }
+        s.active = index
+        slash = s
+    }
+
+    /// Runs the highlighted command, or the one given. False when there's nothing to run.
+    @discardableResult
+    func runSlash(_ command: SlashCommand? = nil) -> Bool {
+        guard let s = slash, let picked = command ?? (s.commands.indices.contains(s.active) ? s.commands[s.active] : nil),
+              let tv = textView, let storage = tv.textStorage else { return false }
+        slash = nil
+        // The "/" and what was typed after it go; the command acts on the line.
+        let caret = tv.selectedRange().location
+        let typed = NSRange(location: s.from, length: max(0, caret - s.from))
+        if NSMaxRange(typed) <= storage.length, tv.shouldChangeText(in: typed, replacementString: "") {
+            storage.replaceCharacters(in: typed, with: "")
+            tv.didChangeText()
+            tv.setSelectedRange(NSRange(location: s.from, length: 0))
+        }
+        onSlash?(picked)
+        refreshState()
+        return true
+    }
+
+    /// The text of the line the caret is on, without checkboxes or the reminder mark.
+    var currentLineText: String {
+        guard let tv = textView else { return "" }
+        let line = (tv.string as NSString).substring(with: currentParagraph())
+        return line.replacingOccurrences(of: "\u{FFFC}", with: "").replacingOccurrences(of: "⏰", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Adds text at the start of the caret's line (after its checkbox), or at its end.
+    func insertOnLine(_ text: String, atEnd: Bool) {
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        let ns = storage.string as NSString
+        let line = currentParagraph()
+        var at: Int
+        if atEnd {
+            at = NSMaxRange(line)
+            if at > line.location, ns.character(at: at - 1) == 10 { at -= 1 }
+        } else {
+            at = line.location
+            while at < NSMaxRange(line), ns.character(at: at) == 0xFFFC || ns.character(at: at) == 32 { at += 1 }
+        }
+        let attributes = at < storage.length ? storage.attributes(at: max(line.location, min(at, storage.length - 1)), effectiveRange: nil)
+                                             : typingAttributes(of: tv)
+        let range = NSRange(location: at, length: 0)
+        guard tv.shouldChangeText(in: range, replacementString: text) else { return }
+        storage.replaceCharacters(in: range, with: NSAttributedString(string: text, attributes: attributes.filter { $0.key != .attachment }))
+        tv.didChangeText()
         refreshState()
     }
 
@@ -1358,6 +1471,7 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             publish(textView)
+            parent.controller.detectSlash()
         }
 
         /// Hands the text to SwiftUI and the save, marked as the editor's own.
@@ -1373,6 +1487,20 @@ struct RichTextEditor<Header: View>: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             parent.controller.refreshState()
+            parent.controller.detectSlash()
+        }
+
+        /// While the "/" menu is open, the arrows move through it, Return and Tab pick, Escape closes it.
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            let controller = parent.controller
+            guard controller.slash != nil else { return false }
+            switch commandSelector {
+            case #selector(NSResponder.moveUp(_:)): controller.moveSlash(-1); return true
+            case #selector(NSResponder.moveDown(_:)): controller.moveSlash(1); return true
+            case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertTab(_:)): return controller.runSlash()
+            case #selector(NSResponder.cancelOperation(_:)), #selector(NSTextView.complete(_:)): controller.dismissSlash(); return true
+            default: return false
+            }
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {

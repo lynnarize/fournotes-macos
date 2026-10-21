@@ -99,15 +99,16 @@ struct NoteEditorView: View {
         // the title and the note's properties, then the writing.
         VStack(spacing: 0) {
             header
-            rule
+            // Across the pane, as on the web: the header is a bar, not a section.
+            Rectangle().fill(p.borderSubtle).frame(height: 1)
             toolbar
-                .padding(.horizontal, 18)
-            rule
+                .padding(.top, 12)
             writingArea
-            linkedRow
             footer
         }
         .background(p.bg)
+        .overlay(alignment: .topLeading) { slashMenu }
+        .onAppear { controller.onSlash = { runSlash($0) } }
         .motion(focusMode, Motion.screen)
         .background {
             // Escape leaves focus mode, as it does on the web — unless it is
@@ -124,6 +125,81 @@ struct NoteEditorView: View {
         .onChange(of: note.updatedAt) { _, _ in reloadIfChangedElsewhere() }
         .fnSheet(isPresented: $showLinkSheet) { linkSheet }
         .fnSheet(isPresented: $showReminderPicker) { reminderPicker }
+    }
+
+    // MARK: - The "/" menu
+
+    /// The card under the caret (above it near the bottom of the window), over everything.
+    private var slashMenu: some View {
+        GeometryReader { geo in
+            if let s = controller.slash {
+                let frame = geo.frame(in: .global)
+                let height = CGFloat(min(320, s.commands.count * 50) + 86)
+                let below = s.caret.maxY - frame.minY + 6
+                let above = s.caret.minY - frame.minY - height - 6
+                let y = below + height > geo.size.height - 8 && above > 8 ? above : below
+                let x = min(max(8, s.caret.minX - frame.minX - 18), geo.size.width - 328)
+                SlashMenuView(commands: s.commands, active: s.active,
+                              onPick: { controller.runSlash($0) },
+                              onHover: { controller.hoverSlash($0) })
+                    .offset(x: x, y: y)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)))
+            }
+        }
+        .animation(Motion.quick, value: controller.slash == nil)
+    }
+
+    /// What each "/" command does with the line it was typed on.
+    private func runSlash(_ command: SlashCommand) {
+        let line = controller.currentLineText
+        let needLine = { toasts.push("Type something on this line first, then use the command.", tone: .error) }
+        switch command {
+        case .todo:
+            guard !line.isEmpty else { return needLine() }
+            store.addTodo { $0.title = line; $0.noteId = note.id }
+            if !controller.state.isChecklist { controller.toggleChecklist() }
+            toasts.push("✅ Task added and linked: \(line)")
+        case .remind:
+            guard !line.isEmpty else { return needLine() }
+            let iso = DateKit.iso(Self.tomorrowAtNine)
+            store.addTodo { $0.title = line; $0.noteId = note.id; $0.dueAt = iso; $0.remindAt = iso }
+            controller.insertOnLine(" ⏰", atEnd: true)
+            if !controller.state.isChecklist { controller.toggleChecklist() }
+            toasts.push("⏰ Reminder \(Fmt.due(iso)): \(line)")
+        case .expense:
+            guard let amount = Money.parse(line), amount > 0 else {
+                toasts.push("Add an amount on the line, like “lunch 45k”.", tone: .error)
+                return
+            }
+            let merchant = line
+                .replacingOccurrences(of: #"(?i)(rp|idr)?\.?\s*\d[\d.,]*\s*(rb|ribu|k|jt|juta)?\b"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+            let tx = store.addTransaction {
+                $0.merchant = merchant.isEmpty ? "Expense" : merchant
+                $0.amount = amount
+                $0.category = Wallet.guessCategory(line)
+                $0.noteId = note.id
+            }
+            controller.insertOnLine("💸 ", atEnd: false)
+            toasts.push("💸 Logged \(Money.format(amount, tx.currency)) (\(tx.category))")
+        case .sticky:
+            guard !line.isEmpty else { return needLine() }
+            store.addNote { QuickNote.apply(line, to: &$0) }
+            toasts.push("📌 Saved as a quick note on Today")
+        case .ask:
+            guard !line.isEmpty else { return needLine() }
+            let question = "\(line)\n\n(Context: from my note “\(displayTitle)”)"
+            Task { _ = await AppModel.shared.assistant.send(question) }
+        case .checklist: controller.toggleChecklist()
+        case .bullet: controller.toggleBulletList()
+        case .numbered: controller.toggleNumberedList()
+        case .heading: controller.setHeading(2)
+        case .quote: controller.toggleQuote()
+        case .divider: controller.insertDivider()
+        case .date: controller.insertText(todayString)
+        case .time: controller.insertText(Fmt.time(Date()))
+        }
     }
 
     // MARK: - Loading and saving
@@ -237,50 +313,40 @@ struct NoteEditorView: View {
             IconButton(focusMode ? "shrink" : "expand", size: 18, box: 30,
                        help: focusMode ? "Exit focus mode (Esc)" : "Focus mode", action: onToggleFocus)
 
-            Rectangle().fill(p.line).frame(width: 1, height: 22).padding(.horizontal, 4)
-
+            // Where you are, as on the web: muted, the note's name a shade stronger.
             HStack(spacing: 6) {
-                Text("Notes").foregroundStyle(p.muted)
-                Icon("chevron", size: 12).foregroundStyle(p.muted)
-                Text(title.isEmpty ? "Untitled" : title).foregroundStyle(p.text)
+                Text("Notes").foregroundStyle(p.faint)
+                Icon("chevron", size: 12).foregroundStyle(p.faint)
+                Text(title.isEmpty ? "Untitled" : title).foregroundStyle(p.muted)
             }
             .font(FN.body)
             .lineLimit(1)
+            .padding(.leading, 6)
 
             Spacer(minLength: 8)
 
-            HStack(spacing: 0) {
-                Button(action: share) {
-                    HStack(spacing: 6) {
-                        Icon("share", size: 15)
-                        Text("Share").font(FN.bodyMedium)
-                    }
-                    .foregroundStyle(p.foreground)
-                    .padding(.leading, 12)
-                    .padding(.trailing, 10)
-                    .frame(height: 32)
-                    .contentShape(Rectangle())
+            // Whether it's saved, beside Share, where the web app says it.
+            HStack(spacing: 5) {
+                if saving {
+                    Text("Saving…").transition(.opacity)
+                } else {
+                    Icon("check", size: 13)
+                    Text("Saved").transition(.opacity)
                 }
-                .buttonStyle(.fn)
-
-                Rectangle().fill(p.border).frame(width: 1, height: 18)
-
-                Button(action: copyText) {
-                    Icon("copy", size: 15)
-                        .foregroundStyle(p.foreground)
-                        .frame(width: 34, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.fn)
-                .help("Copy note text")
             }
-            // The kit's secondary button: one primary per surface, and this isn't it.
-            .background(p.surface, in: Capsule())
-            .overlay(Capsule().strokeBorder(p.border, lineWidth: 1))
+            .font(FN.small)
+            .foregroundStyle(p.faint)
             .fixedSize()
+            .padding(.trailing, 6)
+            .animation(Motion.standard, value: saving)
+            .accessibilityElement(children: .combine)
+
+            SecondaryButton(title: "Share", icon: "share", action: share)
+                .fixedSize()
 
             IconMenu("more", size: 20, help: "More actions") {
                 [
+                    .item("Copy note text", action: copyText),
                     .item(EdgeStickies.shared.isStuck(note.id) ? "Take off screen edge" : "Stick to screen edge",
                           action: { EdgeStickies.shared.toggle(note.id) }),
                     .item("Duplicate", action: duplicate),
@@ -291,9 +357,8 @@ struct NoteEditorView: View {
                 ]
             }
         }
-        .padding(.horizontal, 30)
-        .padding(.top, 16)
-        .padding(.bottom, 12)
+        .padding(.horizontal, 20)
+        .frame(height: 60)
     }
 
     /// A hairline between sections, inset to the content like the reference.
@@ -326,21 +391,18 @@ struct NoteEditorView: View {
     private var titleBlock: some View {
         column {
             VStack(alignment: .leading, spacing: 0) {
+                // The web app's display face, not a serif: the two now read alike.
                 CommittedField(placeholder: "Untitled", value: note.title,
-                               font: FN.serif(34), axis: .vertical,
+                               font: FN.display(36), axis: .vertical,
                                onCommit: saveTitle)
-                    .tracking(-0.4)
+                    .tracking(FN.displayTracking(36))
                     .foregroundStyle(p.text)
                     .padding(.bottom, 16)
 
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 10) {
                     // Focus mode keeps only what you might still change.
                     if !focusMode {
-                        property("Created") { Text(stamp(note.createdAt)) }
-                        property("Last modified") {
-                            Text(saving ? "Saving…" : stamp(note.updatedAt))
-                                .contentTransition(.opacity)
-                        }
+                        property("Created") { Text(stamp(note.createdAt)).foregroundStyle(p.muted).help(stamp(note.createdAt)) }
                         if let source = SOURCE_NAME[note.source] {
                             property("Source") { Text(source) }
                         }
@@ -351,6 +413,10 @@ struct NoteEditorView: View {
                             tagControl
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    // What the note made, among its properties as on the web.
+                    if !linkedTodos.isEmpty || !linkedTxs.isEmpty {
+                        property("Linked") { linkedChips }
                     }
                 }
                 .animation(Motion.standard, value: focusMode)
@@ -383,7 +449,7 @@ struct NoteEditorView: View {
     /// it, and hides them again. It is only there when they don't all fit.
     private var toolbar: some View {
         ToolbarLayout(expanded: toolbarExpanded) {
-            group { insertMenu }
+            HStack(spacing: 2) { insertMenu }.fixedSize()
             group {
                 IconMenu("textSize", size: 19, help: "Text style") { textStyleEntries }
                 TextMenu(title: fontLabel, width: 92, help: "Font") { fontEntries }
@@ -438,17 +504,27 @@ struct NoteEditorView: View {
             }
             .rotationEffect(.degrees(toolbarExpanded ? 180 : 0))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Tools that don't fit wait past the trailing edge, out of sight.
         .clipped()
+        // One slim pill, as the web app's toolbar: a rounded card once it opens to more lines.
+        .background(p.surface, in: RoundedRectangle(cornerRadius: toolbarExpanded ? 22 : 26, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: toolbarExpanded ? 22 : 26, style: .continuous).strokeBorder(p.border, lineWidth: 1))
+        .frame(maxWidth: focusMode ? 800 : 760)
+        .frame(maxWidth: .infinity, alignment: focusMode ? .center : .leading)
+        .padding(.horizontal, focusMode ? 48 : 36)
         .animation(Motion.standard, value: toolbarExpanded)
     }
 
-    /// A run of related tools that wraps as one piece.
+    /// A run of related tools that wraps as one piece, set off from the one before by a hairline.
     private func group<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        HStack(spacing: 2) { content() }.fixedSize()
+        HStack(spacing: 2) {
+            Rectangle().fill(p.border).frame(width: 1, height: 20).padding(.horizontal, 5)
+            content()
+        }
+        .fixedSize()
     }
 
     private var fontEntries: [MenuEntry] {
@@ -486,11 +562,9 @@ struct NoteEditorView: View {
                 .item("Current time") { controller.insertText(Fmt.time(Date())) },
             ]
         } label: {
-            Icon("plus", size: 15)
-                .foregroundStyle(p.accentForeground)
-                .frame(width: 24, height: 24)
-                .background(p.accent, in: Circle())
-                .frame(width: 30, height: 30)
+            Icon("plus", size: 18)
+                .foregroundStyle(p.textSecondary)
+                .frame(width: 32, height: 32)
                 .contentShape(Rectangle())
         }
     }
@@ -521,7 +595,7 @@ struct NoteEditorView: View {
                 } else {
                     ProgressView().controlSize(.small)
                 }
-                Text("AI").font(FN.bodyMedium).foregroundStyle(p.text)
+                Text("Ask AI").font(FN.body).foregroundStyle(p.text)
             }
             .padding(.horizontal, 6)
             .frame(height: 30)
@@ -668,47 +742,31 @@ struct NoteEditorView: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(p.line, lineWidth: 1))
     }
 
-    @ViewBuilder
-    private var linkedRow: some View {
-        if !linkedTodos.isEmpty || !linkedTxs.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                HStack(spacing: 4) {
-                    Icon("link", size: 12)
-                    Text("Linked")
-                }
-                .font(FN.small)
-                .foregroundStyle(p.faint)
-
-                FlowLayout(spacing: 6, alignment: .leading) {
-                    ForEach(linkedTodos) { todo in
-                        Button { nav.open(ChangeLink(kind: .todos, id: todo.id)) } label: {
-                            Chip(tone: nil) {
-                                Icon("todo", size: 11)
-                                Text(todo.title.isEmpty ? "Untitled task" : todo.title)
-                                    .strikethrough(todo.done)
-                            }
-                        }
-                        .buttonStyle(.fn)
-                        .help("Open in To-Do")
-                    }
-                    ForEach(linkedTxs) { tx in
-                        Button { nav.open(ChangeLink(kind: .transactions, id: tx.id)) } label: {
-                            Chip(tone: nil) {
-                                Icon("finance", size: 11)
-                                Text("\(tx.merchant) · \(Money.format(tx.amount, tx.currency, compact: true))")
-                            }
-                        }
-                        .buttonStyle(.fn)
-                        .help("Open in Finance")
+    private var linkedChips: some View {
+        FlowLayout(spacing: 6, alignment: .leading) {
+            ForEach(linkedTodos) { todo in
+                Button { nav.open(ChangeLink(kind: .todos, id: todo.id)) } label: {
+                    Chip(tone: nil) {
+                        Icon("todo", size: 11)
+                        Text(todo.title.isEmpty ? "Untitled task" : todo.title)
+                            .strikethrough(todo.done)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .buttonStyle(.fn)
+                .help("Open in To-Do")
             }
-            .padding(.vertical, 10)
-            .frame(maxWidth: focusMode ? 800 : 760, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: focusMode ? .center : .leading)
-            .padding(.horizontal, focusMode ? 48 : 36)
+            ForEach(linkedTxs) { tx in
+                Button { nav.open(ChangeLink(kind: .transactions, id: tx.id)) } label: {
+                    Chip(tone: nil) {
+                        Icon("finance", size: 11)
+                        Text("\(tx.merchant) · \(Money.format(tx.amount, tx.currency, compact: true))")
+                    }
+                }
+                .buttonStyle(.fn)
+                .help("Open in Finance")
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Footer
@@ -721,11 +779,26 @@ struct NoteEditorView: View {
             .count
     }
 
+    /// Length and age on the left; reminders and the assistant on the right, as on
+    /// the web. The far right is the assistant's: its "Ask Four Notes" pill sits
+    /// over that corner, so the buttons stop short of it.
     private var footer: some View {
         VStack(spacing: 0) {
-            rule
-            HStack(alignment: .center, spacing: 6) {
-                IconMenu("bell", size: 17, box: 30, help: "Set a reminder") {
+            Rectangle().fill(p.borderSubtle).frame(height: 1)
+            HStack(alignment: .center, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text("\(wordCount) word\(wordCount == 1 ? "" : "s")").monospacedDigit()
+                    Text("·")
+                    Text("Edited \(Fmt.relative(note.updatedAt))")
+                }
+                .font(FN.small)
+                .foregroundStyle(p.faint)
+                .lineLimit(1)
+                .fixedSize()
+
+                Spacer(minLength: 8)
+
+                MenuButton(help: "Remind me about this note", align: .trailing) {
                     [
                         .header("Remind me about this note"),
                         .item("In an hour") { setReminder(hours: 1) },
@@ -737,34 +810,26 @@ struct NoteEditorView: View {
                             showReminderPicker = true
                         },
                     ]
-                }
-
-                HStack(spacing: 5) {
-                    if wordCount > 0 {
-                        Text("\(wordCount) word\(wordCount == 1 ? "" : "s") ·").monospacedDigit()
+                } label: {
+                    HStack(spacing: 6) {
+                        Icon("bell", size: 15)
+                        Text("Remind me").font(FN.small)
                     }
-                    if saving {
-                        Text("Saving…")
-                            .transition(.opacity.combined(with: .offset(y: 3)))
-                    } else {
-                        Icon("check", size: 13)
-                        Text("All changes saved")
-                            .transition(.opacity.combined(with: .offset(y: 3)))
-                    }
+                    .foregroundStyle(p.muted)
+                    .padding(.horizontal, 10)
+                    .frame(height: 30)
+                    .contentShape(Rectangle())
                 }
-                .font(FN.small)
-                .foregroundStyle(p.faint)
-                .lineLimit(1)
                 .fixedSize()
-                .animation(Motion.standard, value: saving)
 
-                // The right end is the assistant's: its "Ask Four Notes" pill
-                // sits over this corner, as wide as whatever it is saying, and
-                // covered the save status when that was on this side.
-                Spacer(minLength: 0)
+                SecondaryButton(title: "Ask about this note", icon: "sparkle") {
+                    askAssistant("About my note “\(displayTitle)”: ")
+                }
+                .fixedSize()
             }
-            .padding(.horizontal, 30)
-            .padding(.vertical, 7)
+            .padding(.leading, 24)
+            .padding(.trailing, 196)
+            .frame(minHeight: 52)
         }
     }
 
