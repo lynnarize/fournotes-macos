@@ -157,6 +157,26 @@ final class Store: ObservableObject {
         return t
     }
 
+    /// A detected subscription, tracked from now on as a monthly bill: due,
+    /// and a reminder, at 9:00 on the day it's next likely to charge. False
+    /// when that day can't be read.
+    @discardableResult
+    func trackSubscription(_ s: Subscription) -> Bool {
+        guard let day = DateKit.date(s.nextDate),
+              let at9 = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: day) else { return false }
+        let due = DateKit.iso(at9)
+        addTodo {
+            $0.title = "Pay \(s.merchant)"
+            $0.dueAt = due
+            $0.remindAt = due
+            // Anchored to its day, so a bill on the 31st comes back on the
+            // 31st (or the month's last day), not the 28th forever after February.
+            $0.rrule = Recurrence.normalised("FREQ=MONTHLY;INTERVAL=1", anchoredTo: at9) ?? "FREQ=MONTHLY;INTERVAL=1"
+            $0.bill = Bill(amount: s.amount, currency: s.currency, category: s.category)
+        }
+        return true
+    }
+
     @discardableResult
     func addSticky(_ build: (inout Sticky) -> Void = { _ in }) -> Sticky {
         let s = stamp()

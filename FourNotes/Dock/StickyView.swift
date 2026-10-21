@@ -4,6 +4,8 @@ import SwiftUI
 // What the sticky notes show on the dock: a bubble each, splitting off the
 // handle's top and bottom and stretching into a pill with the note's title;
 // and, opened, the note on a sheet of its coloured paper in its own window.
+// The bubbles are the dock's material with the note's colour as a dot; the
+// paper keeps its colours.
 
 struct StickyPaper {
     let fill, text, faint: Color
@@ -118,7 +120,7 @@ struct StickyIsland: View, Animatable {
                     }
                 }
             }
-            .shadow(color: .black.opacity(0.22 * min(1, max(0, progress))), radius: 8, y: 3)
+            .shadow(color: .black.opacity(0.2 * min(1, max(0, progress))), radius: 7, y: 3)
             .allowsHitTesting(false)
 
             ForEach(Array(ids.enumerated()), id: \.element) { i, id in
@@ -134,8 +136,8 @@ struct StickyIsland: View, Animatable {
     }
 }
 
-/// What a bubble shows: the note's colour as a small folded note; stretched
-/// into a pill, the title and when it was last changed too.
+/// What a bubble shows: the note's colour as a dot — ringed while the note is
+/// out — and, stretched into a pill, its title beside it.
 private struct StickyBubbleFace: View {
     let dock: EdgeDock
     let id: String
@@ -149,48 +151,38 @@ private struct StickyBubbleFace: View {
         let note = stickies.note(id)
         let title = note.map { $0.title.isEmpty ? "Untitled" : $0.title } ?? "Untitled"
         let tint = StickyPaper.of(stickies.placement(id)?.color ?? .yellow, dark: scheme == .dark).vivid
-        let glyph = RoundedRectangle(cornerRadius: 3, style: .continuous)
+        let open = StickyWindows.shared.isOpen(id)
+        let dot = Circle()
             .fill(tint)
-            .frame(width: 12, height: 14)
-            .overlay(alignment: .topTrailing) {
-                FoldedCorner().fill(.black.opacity(0.25)).frame(width: 4.5, height: 4.5)
-            }
+            .frame(width: 12, height: 12)
+            .padding(3.5)
+            .overlay(Circle().strokeBorder(tint, lineWidth: 1.5).opacity(open ? 1 : 0))
         ZStack {
-            glyph.opacity(Double(max(0, 1 - stretch * 2.5)))
-            HStack(spacing: 10) {
-                glyph
-                Text(title).font(FN.font(13, .medium)).foregroundStyle(d.text).lineLimit(1)
-                Spacer(minLength: 6)
-                Text(Fmt.relative(note?.updatedAt)).font(FN.font(11)).foregroundStyle(d.faint)
+            dot.opacity(Double(max(0, 1 - stretch * 2.5)))
+            HStack(spacing: 7) {
+                dot
+                Text(title).font(FN.font(13)).foregroundStyle(d.text).lineLimit(1)
+                Spacer(minLength: 0)
             }
-            .padding(.leading, 12)
+            .padding(.leading, 6)
             .padding(.trailing, 14)
             .opacity(Double(max(0, (stretch - 0.55) / 0.45)))
         }
+        .overlay(Capsule().strokeBorder(d.hair, lineWidth: 1))
         .contentShape(Capsule())
         .onTapGesture { dock.openSticky(id) }
         .help(title)
         .accessibilityElement()
-        .accessibilityLabel("Sticky note: \(title)")
+        .accessibilityLabel(open ? "Sticky note: \(title), open" : "Sticky note: \(title)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { dock.openSticky(id) }
     }
 }
 
-private struct FoldedCorner: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        p.closeSubpath()
-        return p
-    }
-}
-
-
-/// The open note: a sheet of coloured paper with a title, the note's text to
-/// write in, and a small toolbar along the bottom.
+/// The open note: a sheet of coloured paper — its colours and the buttons to
+/// unstick and put it back along the top, a title, the note's text to write
+/// in, and along the bottom when it was edited (the formatting tools while
+/// writing) and the way into the app.
 struct StickySheet: View {
     @ObservedObject var state: StickyWindowState
     @ObservedObject private var stickies = EdgeStickies.shared
@@ -209,7 +201,6 @@ struct StickySheet: View {
     /// Whether the text has the keyboard; set to give it the keyboard.
     @State private var editing = false
     @FocusState private var titleFocused: Bool
-    @State private var hovering = false
     /// Where the pointer and the window were when a drag began (screen
     /// coordinates); nil while the note isn't being moved.
     @GestureState private var moving: Move?
@@ -221,7 +212,7 @@ struct StickySheet: View {
     private var paper: StickyPaper {
         .of(stickies.placement(noteId)?.color ?? .yellow, dark: scheme == .dark)
     }
-    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 14, style: .continuous) }
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 16, style: .continuous) }
 
     /// Formatting the plain text can't hold (bold, a link, a web note's
     /// HTML) would be lost by editing it here, so those open in the app.
@@ -232,25 +223,20 @@ struct StickySheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            topStrip
+            topRow
             titleField
-                .padding(.horizontal, 18)
-            Text(edited)
-                .font(FN.font(10.5))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(paper.faint)
-                .padding(.horizontal, 18)
-                .padding(.top, 2)
-                .padding(.bottom, 10)
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 8)
             page
-                .padding(.horizontal, 18)
+                .padding(.horizontal, 20)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            toolbar
-                .padding(.horizontal, 10)
-                .padding(.bottom, 10)
-                .padding(.top, 6)
+            footer
+                .padding(.leading, 20)
+                .padding(.trailing, 12)
+                .frame(height: 40)
         }
-        .background { PaperBackground(paper: paper, dark: scheme == .dark) }
+        .background { PaperBackground(paper: paper) }
         .clipShape(shape)
         .overlay(shape.strokeBorder(paper.text.opacity(scheme == .dark ? 0.14 : 0.07), lineWidth: 0.5))
         // Anywhere on the paper that isn't text or a button moves the note
@@ -259,12 +245,11 @@ struct StickySheet: View {
         .gesture(move)
         // Lifted a little off the screen while it's carried.
         .scaleEffect(carried ? 1.015 : 1)
-        .shadow(color: .black.opacity(scheme == .dark ? 0.5 : carried ? 0.26 : 0.18),
-                radius: carried ? 26 : 20, y: carried ? 18 : 12)
-        .shadow(color: .black.opacity(0.1), radius: 1.5, y: 1)
+        .shadow(color: .black.opacity(scheme == .dark ? 0.55 : carried ? 0.26 : 0.2),
+                radius: carried ? 26 : 22, y: 18)
+        .shadow(color: .black.opacity(scheme == .dark ? 0.35 : 0.1), radius: 3, y: 2)
         .animation(Motion.quick, value: carried)
         .tint(paper.text)
-        .onHover { hovering = $0 }
         .contextMenu { menu }
         .onExitCommand {
             // Esc only puts the pen down; the note stays out until minimized.
@@ -303,33 +288,44 @@ struct StickySheet: View {
 
     // MARK: Parts
 
-    /// The strip along the top the note is dragged by, like the glued edge
-    /// of a paper note, with the button that tucks it away.
-    private var topStrip: some View {
-        HStack(spacing: 0) {
-            Spacer()
-            Button(action: minimize) {
-                Capsule()
-                    .fill(paper.text.opacity(0.6))
-                    .frame(width: 10, height: 1.6)
-                    .frame(width: 22, height: 22)
-                    .background(paper.text.opacity(hovering ? 0.07 : 0), in: Circle())
-                    .contentShape(Circle())
+    /// Along the top: the paper's five colours, and the buttons that take
+    /// the note off the edge and put it back in its bubble. Between them is
+    /// the strip the note is dragged by (see StickyPanel).
+    private var topRow: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 2) {
+                ForEach(StickyTint.allCases, id: \.self) { tint in colourDot(tint) }
             }
-            .buttonStyle(.fn)
-            .help("Minimize")
-            .accessibilityLabel("Minimize")
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Paper colour")
+            Spacer()
+            ToolbarIcon(icon: "pinOff", help: "Take Off the Edge", paper: paper, action: takeOff)
+            ToolbarIcon(icon: "x", help: "Minimize", paper: paper, action: minimize)
         }
-        .padding(.horizontal, 8)
-        .frame(height: StickyGeometry.stripHeight)
-        .background {
-            // The grip: what says the strip is there to take hold of.
-            Capsule()
-                .fill(paper.text.opacity(hovering || carried ? 0.2 : 0.1))
-                .frame(width: 30, height: 4)
-                .allowsHitTesting(false)
+        .padding(.leading, 12)
+        .padding(.trailing, 8)
+        .frame(height: 40)
+    }
+
+    private func colourDot(_ tint: StickyTint) -> some View {
+        let chosen = (stickies.placement(noteId)?.color ?? .yellow) == tint
+        return Button {
+            withAnimation(Motion.standard) { stickies.setColor(noteId, tint) }
+        } label: {
+            Circle()
+                .fill(StickyPaper.of(tint, dark: scheme == .dark).vivid)
+                .padding(chosen ? 2 : 0)
+                .frame(width: 14, height: 14)
+                // The chosen one is ringed in the paper's ink.
+                .overlay(Circle().strokeBorder(paper.text, lineWidth: 1.5).padding(-1.5).opacity(chosen ? 1 : 0))
+                .frame(width: 18, height: 26)
+                .contentShape(Rectangle())
+                .animation(Motion.quick, value: chosen)
         }
-        .animation(Motion.quick, value: hovering)
+        .buttonStyle(.fn)
+        .help(tint.rawValue.capitalized)
+        .accessibilityLabel(tint.rawValue.capitalized)
+        .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 
     private var carried: Bool { moving != nil || state.carried }
@@ -363,7 +359,8 @@ struct StickySheet: View {
             Text("Title")
         }
         .textFieldStyle(.plain)
-        .font(FN.serif(20, .semibold))
+        .font(FN.font(17, .medium))
+        .tracking(-0.25)
         .foregroundStyle(paper.text)
         .focused($titleFocused)
         .onSubmit {
@@ -394,64 +391,36 @@ struct StickySheet: View {
         }
     }
 
-    /// A few of the note editor's tools, for what plain text can hold.
-    private var toolbar: some View {
-        HStack(spacing: 1) {
-            if editable {
-                tool("textSize", "Heading", .heading)
-                tool("listBullet", "Bulleted list", .bullet)
-                tool("listOrdered", "Numbered list", .numbered)
-                tool("checklist", "Checklist", .checklist)
-                tool("quote", "Quote", .quote)
+    /// When it was edited — or, while writing, a few of the note editor's
+    /// tools, for what plain text can hold — and the way into the app.
+    private var footer: some View {
+        HStack(spacing: 8) {
+            if editable && editing {
+                HStack(spacing: 1) {
+                    tool("textSize", "Heading", .heading)
+                    tool("listBullet", "Bulleted list", .bullet)
+                    tool("listOrdered", "Numbered list", .numbered)
+                    tool("checklist", "Checklist", .checklist)
+                    tool("quote", "Quote", .quote)
+                }
+                .padding(.leading, -6)
+                .transition(.opacity)
             } else {
-                Button("Edit in Four Notes", action: openInApp)
-                    .buttonStyle(.fn)
-                    .font(FN.font(11, .medium))
-                    .foregroundStyle(paper.text.opacity(0.7))
-                    .padding(.horizontal, 8)
+                Text(edited)
+                    .font(FN.font(12))
+                    .foregroundStyle(paper.text.opacity(0.6))
+                    .lineLimit(1)
+                    .transition(.opacity)
             }
             Spacer(minLength: 4)
-            MenuButton(help: "Colour", entries: { colourEntries }) {
-                Circle()
-                    .fill(paper.vivid)
-                    .overlay(Circle().strokeBorder(paper.text.opacity(0.2), lineWidth: 0.5))
-                    .frame(width: 13, height: 13)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-            }
-            ToolbarIcon(icon: "arrowUpRight", help: "Open in Four Notes", paper: paper, action: openInApp)
-            MenuButton(help: "More", entries: { moreEntries }) {
-                ToolbarIcon.label("more", paper: paper, active: false)
-            }
+            OpenInAppButton(title: editable ? "Open in Notes" : "Edit in Notes", paper: paper, action: openInApp)
         }
-        .padding(2)
-        .background(paper.text.opacity(0.045), in: Capsule())
-        .opacity(hovering || editing || titleFocused ? 1 : 0.6)
-        .animation(Motion.standard, value: hovering || editing || titleFocused)
+        .animation(Motion.quick, value: editable && editing)
     }
 
     private func tool(_ icon: String, _ help: String, _ kind: StickyText.LineKind) -> some View {
         ToolbarIcon(icon: icon, help: help, paper: paper,
                     active: editing && format.current == kind) { format.toggle(kind) }
-    }
-
-    private var colourEntries: [MenuEntry] {
-        StickyTint.allCases.map { tint in
-            .item(tint.rawValue.capitalized, checked: stickies.placement(noteId)?.color == tint,
-                  swatch: NSColor(StickyPaper.of(tint, dark: scheme == .dark).vivid)) {
-                withAnimation(Motion.standard) { stickies.setColor(noteId, tint) }
-            }
-        }
-    }
-
-    private var moreEntries: [MenuEntry] {
-        [
-            .item("Minimize", action: minimize),
-            .item("Open in Four Notes", action: openInApp),
-            .divider,
-            .item("Take Off the Edge", action: takeOff),
-            .item("Delete Note", destructive: true, action: delete),
-        ]
     }
 
     @ViewBuilder
@@ -613,8 +582,34 @@ private struct HoverIcon: View {
     }
 }
 
-/// Coloured paper: a little lighter where the light catches the top, the
-/// glued strip along it a shade deeper, and a fine grain all over.
+/// "Open in Notes ↗" along the bottom of the paper.
+private struct OpenInAppButton: View {
+    let title: String
+    let paper: StickyPaper
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text(title)
+                Icon("arrowUpRight", size: 12)
+            }
+            .font(FN.font(12, .medium))
+            .foregroundStyle(paper.text.opacity(hovering ? 1 : 0.85))
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(paper.text.opacity(hovering ? 0.07 : 0), in: Capsule())
+            .contentShape(Capsule())
+            .onHover { hovering = $0 }
+            .animation(Motion.quick, value: hovering)
+        }
+        .buttonStyle(.fn)
+        .help("Open in Four Notes")
+    }
+}
+
+/// The paper itself: its colour, flat.
 ///
 /// It takes clicks, though it does nothing with them: a see-through window
 /// lets clicks through wherever SwiftUI has nothing to hit, and with the
@@ -622,29 +617,8 @@ private struct HoverIcon: View {
 /// underneath — the note couldn't be dragged by it.
 private struct PaperBackground: View {
     let paper: StickyPaper
-    let dark: Bool
 
     var body: some View {
-        ZStack(alignment: .top) {
-            paper.fill
-            LinearGradient(colors: [.white.opacity(dark ? 0.05 : 0.35), .clear],
-                           startPoint: .top, endPoint: .bottom)
-            // The glued strip.
-            paper.text.opacity(dark ? 0.06 : 0.035).frame(height: StickyGeometry.stripHeight)
-            Canvas { context, size in
-                // The same grain every time: a fixed sequence, not random.
-                var seed: UInt64 = 0x9E37_79B9_7F4A_7C15
-                func next() -> CGFloat {
-                    seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-                    return CGFloat(seed >> 33) / CGFloat(1 << 31)
-                }
-                let count = Int(size.width * size.height / 90)
-                for _ in 0..<count {
-                    let rect = CGRect(x: next() * size.width, y: next() * size.height, width: 1, height: 1)
-                    let light = next() > 0.5
-                    context.fill(Path(rect), with: .color(light ? .white.opacity(0.10) : .black.opacity(dark ? 0.10 : 0.035)))
-                }
-            }
-        }
+        paper.fill
     }
 }

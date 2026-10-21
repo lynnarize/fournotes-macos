@@ -55,6 +55,7 @@
 		4F3868FC4182E9879E0352E5 /* DockKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55A77CE18E464DA0C74805C0 /* DockKit.swift */; };
 		4F7EDAB4CF05030582E21B3E /* Toast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 435F07C1BFA35EED7CE2EE6B /* Toast.swift */; };
 		51C69BE094A131580E4AFC12 /* LenientDecoding.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF4596594A9FF2EB914A69DA /* LenientDecoding.swift */; };
+		52960D84E636B3D112580A07 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4B3C06CF5384626601E74F0E /* AppIcon.icon */; };
 		533F18F766774CC23C503557 /* EditorUndoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90E94B670095BE3D408B245B /* EditorUndoTests.swift */; };
 		535293A016F9F329627BDF70 /* IntentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2A801B150586DA9BB81391 /* IntentTests.swift */; };
 		5369FA5768C2F14128A486DC /* SVGPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = B270EE21D8E25801BAFE1997 /* SVGPath.swift */; };
@@ -197,6 +198,7 @@
 		435F07C1BFA35EED7CE2EE6B /* Toast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Toast.swift; sourceTree = "<group>"; };
 		43B6FB13079530B3283DE515 /* BriefText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefText.swift; sourceTree = "<group>"; };
 		4B0056FCD5878AD97077285D /* AITools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AITools.swift; sourceTree = "<group>"; };
+		4B3C06CF5384626601E74F0E /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		4BF82AB52483EE0E0AE79044 /* PendingWrites.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingWrites.swift; sourceTree = "<group>"; };
 		4C02C871A5EA4F8B0C554292 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		4C16C94FC4B64DC4DEC1C8B2 /* Wallet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Wallet.swift; sourceTree = "<group>"; };
@@ -317,6 +319,7 @@
 			isa = PBXGroup;
 			children = (
 				2FC974889FC91924B2F34C7C /* Fonts */,
+				4B3C06CF5384626601E74F0E /* AppIcon.icon */,
 				18BDEBEADA3D5B0DE55A8E3B /* Assets.xcassets */,
 				98ACD6F73909391D5E06B7E0 /* FourNotes.entitlements */,
 				AD1F0CDD77400202C71981B6 /* Info.plist */,
@@ -670,6 +673,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				52960D84E636B3D112580A07 /* AppIcon.icon in Resources */,
 				157AB34638C5AAC7F9429282 /* Assets.xcassets in Resources */,
 				DCCE6FFB57B700AF752B25D1 /* OFL.txt in Resources */,
 				3B8DE431E7CDF2817DEE1349 /* OpenSans-Italic-Variable.ttf in Resources */,

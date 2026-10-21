@@ -3,6 +3,7 @@ import SwiftUI
 // The Notion-like neutral palette from the web app (src/app/globals.css),
 // token for token. Light values first, dark second.
 struct Palette {
+    /// The mark: a navy pen stroke and a red spark (white and a brighter red in the dark).
     let logoInk, logoRed: Color
     let bg, panel, text, muted, faint, line, hover: Color
     let accent, danger, ok: Color
@@ -15,7 +16,7 @@ struct Palette {
     let shadowStrong: Color
 
     static let light = Palette(
-        logoInk: .hex(0x000000), logoRed: .hex(0xFE2629),
+        logoInk: .hex(0x0F0B4C), logoRed: .hex(0xE53437),
         bg: .hex(0xFFFFFF), panel: .hex(0xF7F7F5), text: .hex(0x37352F),
         muted: .hex(0x6B6A66), faint: .hex(0x8C8983), line: .hex(0xE9E9E7),
         hover: Color(red: 55/255, green: 53/255, blue: 47/255).opacity(0.06),
@@ -32,7 +33,7 @@ struct Palette {
     )
 
     static let dark = Palette(
-        logoInk: .hex(0xF2F2F0), logoRed: .hex(0xFF3B3E),
+        logoInk: .hex(0xFFFBF7), logoRed: .hex(0xEE1923),
         bg: .hex(0x191919), panel: .hex(0x202020), text: .hex(0xE6E6E4),
         muted: .hex(0xAAA9A5), faint: .hex(0x8A8984), line: .hex(0x2F2F2F),
         hover: Color.white.opacity(0.06),
@@ -50,7 +51,8 @@ struct Palette {
 
     /// Light, on warm paper: cream pages, ink-brown text, a terracotta accent.
     static let paper = Palette(
-        logoInk: .hex(0x2E2819), logoRed: .hex(0xD2402B),
+        // The mark keeps its light colours on paper.
+        logoInk: .hex(0x0F0B4C), logoRed: .hex(0xE53437),
         bg: .hex(0xFBF6E8), panel: .hex(0xF4EDD9), text: .hex(0x3A3326),
         muted: .hex(0x6B624F), faint: .hex(0x857B66), line: .hex(0xE6DCC2),
         hover: Color(red: 58/255, green: 51/255, blue: 38/255).opacity(0.07),
