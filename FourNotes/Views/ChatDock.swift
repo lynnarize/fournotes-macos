@@ -1,17 +1,13 @@
 import AppKit
 import SwiftUI
 
-// The assistant bar. On Today it is the full dock; on the other tabs it folds
-// into a round button in the corner and opens as a panel.
-// Ported from src/components/ChatDock.tsx.
-
-private let SUGGESTIONS = [
-    "Remind me to pay rent of 2.5M every month on the 5th at 9am",
-    "Spent 45k on lunch at Warteg, split with Andi",
-    "Set my food budget to 1.5M a month",
-    "Where did I write about the Bali trip?",
-    "What did I spend most on this month?",
-]
+// Where the assistant lives on screen, as on the web (src/components/ChatDock.tsx):
+//   hero       Today's composer, under the greeting, with a few things to start with.
+//              Sending turns it, in place, into a chat card, as Arc's AI composer does:
+//              your message lifts into a bubble, the reply streams in under it, and the
+//              composer glides to the card's foot. The sidebar and Today's cards stay.
+//   minimized  Every other tab: an "Ask Four Notes" pill in the corner that opens the
+//              same chat as a panel. "Open on Today" moves it into Today's card.
 
 struct ChatDock: View {
     @Environment(\.palette) private var p
@@ -21,53 +17,47 @@ struct ChatDock: View {
     @EnvironmentObject private var engine: AIEngine
 
     var minimized: Bool
-    /// Today's: a large composer in the middle of the page, like a chat
-    /// app's home, with the conversation opening above the input.
+    /// Today's: the composer in the page, turning into the chat card.
     var hero = false
 
-    /// The conversation's own height, so the panel grows with it rather than
-    /// opening at full size around two lines.
-    @State private var contentHeight: CGFloat = 0
-    /// Today's floating conversation, measured so it sits above the input.
-    @State private var floatingHeight: CGFloat = 0
-
+    @Namespace private var glide
     @State private var text = ""
-    @State private var open = false
-    /// Minimized mode only: the panel is showing instead of the round button.
+    /// Minimized mode only: the panel is showing instead of the pill.
     @State private var expanded = false
-    /// The corner composer's frame in the window, for telling clicks outside it.
+    /// The corner panel's frame in the window, for telling clicks outside it.
     @State private var panelFrame: CGRect = .zero
     @State private var outsideClicks: Any?
     @State private var unread = false
     @State private var splitTxId: String?
     @FocusState private var inputFocused: Bool
 
-    private var showingPanel: Bool { minimized ? expanded : true }
+    /// Things to start with on Today: two fill in the start of a request, one asks.
+    private static let starters: [(icon: String, title: String, text: String)] = [
+        ("noteAdd", "Write a note", "Write a note about "),
+        ("receipt", "Log spending", "Spent "),
+        ("calendarCheck", "Plan my day", "What should I focus on today?"),
+    ]
 
     var body: some View {
         Group {
             if hero {
-                heroComposer
+                if nav.todayChat { chatCard } else { heroComposer }
             } else if minimized && !expanded {
-                roundButton
-                    // Grows back out of the corner the composer folds into.
+                pill
+                    // Grows back out of the corner the panel folds into.
                     .transition(.scale(scale: 0.6, anchor: .bottomTrailing).combined(with: .opacity))
-            } else if minimized {
-                // Opened from the corner: the same composer as Today's,
-                // narrower, in the corner.
-                heroComposer
+            } else {
+                panel
                     .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { panelFrame = $0 }
                     .onExitCommand { collapse() }
                     .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.trailing, 24)
+                    .padding(.trailing, 20)
                     .padding(.bottom, 20)
                     // Opens out of the pill's corner, and folds back into it.
                     .transition(.scale(scale: 0.4, anchor: .bottomTrailing).combined(with: .opacity))
-            } else {
-                dock
             }
         }
-        .animation(reduceMotion ? Motion.instant : .spring(response: 0.42, dampingFraction: 0.82),
+        .animation(reduceMotion ? Motion.instant : .spring(response: 0.42, dampingFraction: 0.84),
                    value: minimized && !expanded)
         // Opened in the corner, a click anywhere else folds it away again.
         .onChange(of: minimized && expanded) { _, isOpen in
@@ -77,19 +67,29 @@ struct ChatDock: View {
         // Replies are model output, and a note or a web page can steer it:
         // only web links open from here.
         .environment(\.openURL, .webOnly)
-        .onChange(of: minimized) { _, _ in
-            expanded = false
-            if minimized { open = false }
-        }
+        .onChange(of: minimized) { _, _ in expanded = false }
         .onChange(of: assistant.messages.count) { old, new in
-            guard new > old else { return }
-            let lastIsUser = assistant.messages.last?.role == .user
-            if !minimized || expanded || lastIsUser { reveal() } else { unread = true }
+            guard new > old, let last = assistant.messages.last else { return }
+            // A reply that arrives while a conversation is on screen streams in.
+            if last.role == .assistant, hero || expanded { FreshReplies.ids.insert(last.id) }
+            if hero {
+                // On Today the card opens: a scan or a recording started from the
+                // sidebar lands there too.
+                if !nav.todayChat { glideTo(true) }
+            } else if expanded || last.role == .user {
+                reveal()
+            } else {
+                unread = true
+            }
         }
         .onChange(of: nav.assistantDraft) { _, draft in takeDraft(draft) }
-        // Also when this view is new — a window reopened from the edge dock
-        // with a request waiting: onChange never sees a value set before it.
-        .onAppear { takeDraft(nav.assistantDraft) }
+        // Also when this view is new — a window reopened from the edge dock with a
+        // request waiting: onChange never sees a value set before it.
+        .onAppear {
+            takeDraft(nav.assistantDraft)
+            // Cleared from the corner panel since: no empty card on Today.
+            if hero, nav.todayChat, assistant.messages.isEmpty, assistant.busy == nil { nav.todayChat = false }
+        }
         .onChange(of: assistant.recording) { _, recording in
             // Recording shows its live status, so it needs the panel open.
             if recording && minimized { reveal() }
@@ -101,40 +101,149 @@ struct ChatDock: View {
         }
     }
 
-    // MARK: - Collapsed button
+    // MARK: - Today
 
-    /// The assistant folded away on the other tabs: a small pill in the
-    /// style of Today's composer. One click opens the composer in its place.
-    private var roundButton: some View {
+    private var heroComposer: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ChatComposer(text: $text, focused: $inputFocused,
+                         placeholder: "Ask anything, / for commands, @ to add a note",
+                         floating: true, onSend: submit)
+                .matchedGeometryEffect(id: "composer", in: glide)
+
+            HStack(spacing: 8) {
+                ForEach(Self.starters, id: \.title) { starter in
+                    PillButton(icon: starter.icon, title: starter.title) {
+                        text = starter.text
+                        if starter.text.hasSuffix("?") { submit(starter.text); text = "" } else { inputFocused = true }
+                    }
+                }
+                if !assistant.messages.isEmpty {
+                    PillButton(icon: "undo", title: "Back to the conversation") { glideTo(true) }
+                        .transition(.opacity)
+                }
+            }
+            .disabled(assistant.busy != nil)
+        }
+        .frame(maxWidth: 760, alignment: .leading)
+    }
+
+    /// The conversation, in a card where the composer was.
+    private var chatCard: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Text(cardTitle)
+                    .font(FN.font(13, .medium))
+                    .foregroundStyle(p.foreground)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                IconButton("newChat", size: 16, box: 30, help: "New chat") {
+                    glideTo(false) { assistant.clear() }
+                }
+                .disabled(assistant.busy != nil)
+                IconButton("x", size: 16, box: 30, help: "Close the chat") { glideTo(false) }
+            }
+            .padding(.leading, 18)
+            .padding(.trailing, 10)
+            .frame(height: 48)
+            .overlay(alignment: .bottom) { Rectangle().fill(p.borderSubtle).frame(height: 1) }
+
+            ChatThread(onJump: jump, onSplit: { splitTxId = $0 })
+
+            ChatComposer(text: $text, focused: $inputFocused,
+                         placeholder: "Ask a follow-up, / for commands, @ to add a note",
+                         onSend: submit)
+                .matchedGeometryEffect(id: "composer", in: glide)
+                .padding(12)
+        }
+        .background(p.surface, in: RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous).strokeBorder(p.border, lineWidth: 1))
+        // As tall as the window allows, within reason.
+        .containerRelativeFrame(.vertical) { height, _ in max(420, min(680, height - 200)) }
+        .transition(.opacity.combined(with: .offset(y: 6)))
+        .onExitCommand { glideTo(false) }
+    }
+
+    /// The card's title: the conversation's first question.
+    private var cardTitle: String {
+        assistant.messages.first(where: { $0.role == .user })?.content
+            .components(separatedBy: .newlines).first ?? "Assistant"
+    }
+
+    /// Opens or folds the card, the composer gliding between its two places.
+    private func glideTo(_ open: Bool, then: (() -> Void)? = nil) {
+        withAnimation(reduceMotion ? Motion.instant : .spring(response: 0.46, dampingFraction: 0.88)) {
+            nav.todayChat = open
+            then?()
+        }
+        if open { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { inputFocused = true } }
+    }
+
+    // MARK: - The corner
+
+    private var pill: some View {
         HStack {
             Spacer()
             AskPill(busy: assistant.busy, unread: unread) { reveal(focus: true) }
         }
-        .padding(.trailing, 24)
+        .padding(.trailing, 20)
         .padding(.bottom, 20)
     }
 
-    // MARK: - Clicks outside the corner composer
+    private var panel: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("Assistant").font(FN.font(13, .medium)).foregroundStyle(p.foreground)
+                    if engine.chatRunsOnDevice { OnDeviceMark(origin: .onDevice) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if !assistant.messages.isEmpty {
+                    IconButton("newChat", size: 16, box: 30, help: "New chat") { assistant.clear() }
+                        .disabled(assistant.busy != nil)
+                }
+                IconButton("expand", size: 15, box: 30, help: "Open on Today") { openOnToday() }
+                IconButton("x", size: 16, box: 30, help: "Close") { collapse() }
+            }
+            .padding(.leading, 18)
+            .padding(.trailing, 10)
+            .frame(height: 48)
+            .overlay(alignment: .bottom) { Rectangle().fill(p.borderSubtle).frame(height: 1) }
 
-    /// Watches clicks in the window while the corner composer is open; one
-    /// outside it — and outside the conversation above it — folds it away.
-    /// The click still goes where it was aimed.
+            ChatThread(onJump: jump, onSplit: { splitTxId = $0 }, onSuggest: { q in submit(q) })
+
+            ChatComposer(text: $text, focused: $inputFocused,
+                         placeholder: "Ask anything, / for commands, @ to add a note",
+                         onSend: submit)
+                .padding(12)
+        }
+        .frame(width: 420)
+        .clipShape(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
+        .containerRelativeFrame(.vertical) { height, _ in min(720, height - 40) }
+        .floating(p)
+    }
+
+    /// Moves the conversation onto Today, into its card.
+    private func openOnToday() {
+        collapse()
+        nav.todayChat = true
+        nav.tab = .today
+    }
+
+    // MARK: - Clicks outside the corner panel
+
+    /// Watches clicks in the window while the corner panel is open; one outside it
+    /// folds it away. The click still goes where it was aimed.
     private func watchOutsideClicks() {
         guard outsideClicks == nil else { return }
         outsideClicks = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
-            // Only the main window: the edge dock, menus the composer opens
-            // and sheets are other windows, and clicks there aren't "outside".
+            // Only the main window: the edge dock, menus the composer opens and
+            // sheets are other windows, and clicks there aren't "outside".
             guard let window = event.window, window.canBecomeMain,
                   let content = window.contentView else { return event }
             let point = CGPoint(x: event.locationInWindow.x,
                                 y: content.bounds.height - event.locationInWindow.y)
-            var area = panelFrame
-            if showsConversation {
-                // The conversation floats above the input, outside its frame.
-                area.origin.y -= floatingHeight
-                area.size.height += floatingHeight
-            }
-            if !area.insetBy(dx: -4, dy: -4).contains(point) {
+            if !panelFrame.insetBy(dx: -4, dy: -4).contains(point) {
                 DispatchQueue.main.async { collapse() }
             }
             return event
@@ -146,591 +255,55 @@ struct ChatDock: View {
         outsideClicks = nil
     }
 
-
-    // MARK: - Today's composer
-
-    /// Things to start with, each filling in the start of a request.
-    private static let starters: [(icon: String, title: String, text: String)] = [
-        ("noteAdd", "Write", "Write a note about "),
-        ("bell", "Remind", "Remind me to "),
-        ("wallet", "Spent", "Spent "),
-        ("search", "Find", "Where did I write about "),
-        ("sparkle", "Plan my day", "What should I focus on today?"),
-    ]
-
-    private var heroComposer: some View {
-        let sendDisabled = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || assistant.busy != nil
-        return VStack(spacing: 18) {
-            VStack(spacing: 0) {
-                if assistant.recording {
-                    recordingBar
-                    Divider().overlay(p.line)
-                }
-
-                TextField("How can I help you today?", text: $text, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 16))
-                    .foregroundStyle(p.text)
-                    .lineLimit(2...8)
-                    .focused($inputFocused)
-                    .onSubmit(submit)
-                    .onChange(of: inputFocused) { _, focused in if focused { open = true } }
-                    .padding(.horizontal, 18)
-                    .padding(.top, 16)
-
-                HStack(spacing: 6) {
-                    MenuButton(help: "Add", entries: {
-                        [.item("Scan a receipt or note…") { assistant.pickAndScan() },
-                         .item(assistant.recording ? "Stop recording" : "Record a voice note") {
-                             assistant.recording ? assistant.stopRecording() : assistant.startRecording()
-                         },
-                         .item("Paste from the clipboard") {
-                             if let clip = NSPasteboard.general.string(forType: .string) {
-                                 text = String(clip.prefix(2_000))
-                                 inputFocused = true
-                             }
-                         }]
-                    }) {
-                        Icon("plus", size: 18)
-                            .foregroundStyle(p.muted)
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .disabled(assistant.busy != nil)
-
-                    if minimized {
-                        IconButton("chevronDown", size: 16, box: 32, help: "Hide the assistant") { collapse() }
-                    }
-
-                    Spacer()
-
-                    Text(engine.route.label)
-                        .font(FN.font(13))
-                        .foregroundStyle(p.faint)
-                        .lineLimit(1)
-                        .padding(.trailing, 4)
-                        .help("Answers come from \(engine.route.label). Change it in Settings → AI & API keys.")
-
-                    IconButton(assistant.recording ? "stop" : "mic", size: 18, box: 32,
-                               tone: assistant.recording ? .white : nil,
-                               help: assistant.recording ? "Stop and summarize" : "Record a voice note") {
-                        assistant.recording ? assistant.stopRecording() : assistant.startRecording()
-                    }
-                    .background(assistant.recording ? p.danger : .clear, in: Circle())
-                    .disabled(assistant.busy != nil && !assistant.recording)
-
-                    Button(action: submit) {
-                        Icon("send", size: 16, weight: 2)
-                            .foregroundStyle(sendDisabled ? p.faint : p.bg)
-                            .frame(width: 32, height: 32)
-                            .background(sendDisabled ? p.hover : p.text, in: Circle())
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.fn)
-                    .disabled(sendDisabled)
-                    .motion(sendDisabled, Motion.quick)
-                    .accessibilityLabel("Send")
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 10)
-                .padding(.bottom, 10)
-            }
-            .background(p.panel, in: inputShape)
-            .overlay(inputShape.stroke(p.line, lineWidth: 1))
-            // The conversation grows up out of the input, over the page: one
-            // card, so Today stays one page and nothing below it moves.
-            .overlay(alignment: .top) {
-                if showsConversation {
-                    conversation
-                        .background(p.panel, in: conversationShape)
-                        .clipShape(conversationShape)
-                        .overlay(conversationShape.stroke(p.line, lineWidth: 1))
-                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { floatingHeight = $0 }
-                        // Sitting exactly on the input, sharing its edge.
-                        .offset(y: -floatingHeight + 1)
-                        .transition(.opacity.combined(with: .offset(y: 12)))
-                }
-            }
-            // One shadow for the whole card, so none falls across the seam.
-            .compositingGroup()
-            .shadow(color: p.shadowStrong, radius: 18, y: 6)
-            .animation(Motion.screen, value: open || assistant.recording)
-
-            if !minimized {
-            HStack(spacing: 8) {
-                ForEach(Self.starters, id: \.title) { starter in
-                    StarterChip(icon: starter.icon, title: starter.title) {
-                        if starter.text.hasSuffix("?") {
-                            text = starter.text
-                            submit()
-                        } else {
-                            text = starter.text
-                            inputFocused = true
-                        }
-                    }
-                }
-            }
-            .disabled(assistant.busy != nil)
-            }
-        }
-        .frame(maxWidth: minimized ? 460 : 720)
-    }
-
-    private var showsConversation: Bool {
-        open && (!assistant.messages.isEmpty || assistant.busy != nil)
-    }
-
-    /// Rounded all round; square on top while the conversation sits on it.
-    private var inputShape: UnevenRoundedRectangle {
-        let top: CGFloat = showsConversation ? 0 : 20
-        return UnevenRoundedRectangle(topLeadingRadius: top, bottomLeadingRadius: 20,
-                                      bottomTrailingRadius: 20, topTrailingRadius: top, style: .continuous)
-    }
-
-    private var conversationShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(topLeadingRadius: 20, bottomLeadingRadius: 0,
-                               bottomTrailingRadius: 0, topTrailingRadius: 20, style: .continuous)
-    }
-
-    // MARK: - Full dock
-
-    private var dock: some View {
-        VStack(spacing: 0) {
-            if open {
-                conversation
-                Divider().overlay(p.line)
-            }
-            if assistant.recording {
-                recordingBar
-                Divider().overlay(p.line)
-            }
-            inputRow
-        }
-        .background(p.bg)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(p.line, lineWidth: 1))
-        .shadow(color: p.shadowStrong, radius: 16, y: 4)
-        .entrance()
-        // Opened from the corner button it is a compact panel in that corner,
-        // not a sheet across the bottom of whatever you were working on. On
-        // Today it is the page's own bar.
-        .frame(maxWidth: minimized ? 500 : 800)
-        .frame(maxWidth: .infinity, alignment: minimized ? .trailing : .center)
-        .padding(.horizontal, minimized ? 24 : 16)
-        .padding(.bottom, minimized ? 20 : 14)
-        .transition(.opacity.combined(with: .offset(y: 10)))
-        .animation(Motion.screen, value: open || assistant.recording)
-    }
-
-    private var conversation: some View {
-        VStack(spacing: 0) {
-            HStack {
-                HStack(spacing: 6) {
-                    Icon("sparkle", size: 15).foregroundStyle(p.accent)
-                    Text("Assistant").font(FN.bodyMedium).foregroundStyle(p.muted)
-                    if engine.chatRunsOnDevice {
-                        OnDeviceMark(origin: .onDevice)
-                    }
-                }
-                Spacer()
-                if !assistant.messages.isEmpty {
-                    GhostButton(action: { assistant.clear() }) { Text("Clear") }
-                }
-                IconButton("x", size: 14, box: 26, help: "Collapse chat") {
-                    minimized && !hero ? collapse() : (open = false)
-                }
-            }
-            .padding(.leading, 14)
-            .padding(.trailing, 8)
-            .padding(.vertical, 6)
-
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if assistant.messages.isEmpty {
-                            FlowLayout(spacing: 8, alignment: .leading) {
-                                ForEach(SUGGESTIONS, id: \.self) { s in
-                                    SuggestionChip(text: s) { Task { await assistant.send(s) } }
-                                }
-                            }
-                        }
-                        ForEach(assistant.messages) { message in
-                            MessageRow(message: message, onJump: jump) { splitTxId = $0 }
-                                .id(message.id)
-                                .transition(.move(edge: message.role == .user ? .trailing : .leading)
-                                    .combined(with: .opacity))
-                        }
-                        if let busy = assistant.busy {
-                            TypingDots(label: busy).id("busy")
-                                .transition(.opacity.combined(with: .offset(y: 6)))
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
-                }
-                // As tall as the conversation, up to a cap; past that it scrolls.
-                // A floor too, so a two-line exchange doesn't look cramped.
-                .frame(height: min(max(contentHeight, assistant.messages.isEmpty ? 1 : 220),
-                                   minimized ? 540 : (hero ? 380 : 400)))
-                .animation(Motion.list, value: assistant.messages)
-                .animation(Motion.standard, value: assistant.busy)
-                .onChange(of: assistant.messages.count) { _, _ in
-                    withAnimation(Motion.list) { proxy.scrollTo(assistant.messages.last?.id, anchor: .bottom) }
-                }
-            }
-        }
-    }
-
-    private var recordingBar: some View {
-        HStack(spacing: 8) {
-            Text("● Recording")
-                .font(FN.bodyMedium)
-                .foregroundStyle(p.danger)
-            Text(transcriptLabel)
-                .font(FN.body)
-                .foregroundStyle(p.muted)
-                .lineLimit(1)
-            Spacer()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-    }
-
-    private var transcriptLabel: String {
-        if !assistant.liveTranscript.isEmpty { return assistant.liveTranscript }
-        if assistant.transcriptionUnavailable {
-            return "Recording. Dictation is off, so this will be written up after you stop."
-        }
-        return "Listening… press stop when you're done."
-    }
-
-    private var inputRow: some View {
-        let sendDisabled = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || assistant.busy != nil
-        return HStack(alignment: .bottom, spacing: 6) {
-            IconButton("scan", size: 19, box: 34, help: "Scan a receipt, note or e-wallet screenshot") {
-                assistant.pickAndScan()
-            }
-            .disabled(assistant.busy != nil)
-
-            TextField(minimized ? "Ask or add anything…"
-                                : "Ask, add a task, log spending, or paste an app notification…",
-                      text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15))
-                .foregroundStyle(p.text)
-                .lineLimit(1...6)
-                .focused($inputFocused)
-                .onSubmit(submit)
-                .onChange(of: inputFocused) { _, focused in if focused { open = true } }
-                .padding(.vertical, 7)
-
-            IconButton(assistant.recording ? "stop" : "mic", size: 19, box: 34,
-                       tone: assistant.recording ? .white : nil,
-                       help: assistant.recording ? "Stop and summarize" : "Record voice note") {
-                assistant.recording ? assistant.stopRecording() : assistant.startRecording()
-            }
-            .background(assistant.recording ? p.danger : .clear,
-                        in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
-            .disabled(assistant.busy != nil && !assistant.recording)
-
-            Button(action: submit) {
-                Icon("send", size: 19)
-                    .foregroundStyle(p.bg)
-                    .frame(width: 34, height: 34)
-                    .background(p.text, in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.fn)
-            .disabled(sendDisabled)
-            .opacity(sendDisabled ? 0.3 : 1)
-            .motion(sendDisabled, Motion.quick)
-            .accessibilityLabel("Send")
-        }
-        .padding(8)
-    }
-
     // MARK: - Actions
 
     private func reveal(focus: Bool = false) {
         expanded = true
-        open = true
         unread = false
         if focus {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { inputFocused = true }
         }
     }
 
-    /// "Ask the assistant…" from elsewhere: fill in the request and open the
-    /// input, without sending — it is the user's to finish.
+    /// "Ask the assistant…" from elsewhere: fill in the request and open the input,
+    /// without sending — it is the user's to finish.
     private func takeDraft(_ draft: String?) {
         guard let draft else { return }
         text = draft
         nav.assistantDraft = nil
-        reveal(focus: true)
+        if hero { inputFocused = true } else { reveal(focus: true) }
     }
 
     private func collapse() {
         inputFocused = false
         expanded = false
-        open = false
     }
 
-    private func submit() {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func submit(_ message: String) {
+        let t = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, assistant.busy == nil else { return }
-        text = ""
-        open = true
+        if hero && !nav.todayChat { glideTo(true) }
         Task { await assistant.send(t) }
     }
 
-    /// Jump to what the assistant changed, closing the panel so the item isn't hidden behind it.
+    /// Jump to what the assistant changed, folding the conversation so the item isn't
+    /// hidden behind it.
     private func jump(_ link: ChangeLink, _ all: [ChangeLink]) {
         nav.markFiled(all)
         // Shown now, so not news: no dot left on the tabs these went to.
         nav.clearPulses(for: all)
-        if minimized { collapse() } else { open = false }
+        if minimized { collapse() }
         inputFocused = false
         nav.open(link)
     }
 }
 
-// MARK: - Message row
-
-private struct MessageRow: View {
-    @Environment(\.palette) private var p
-    @EnvironmentObject private var assistant: Assistant
-    @EnvironmentObject private var engine: AIEngine
-    let message: UIMessage
-    let onJump: (ChangeLink, [ChangeLink]) -> Void
-    let onSplit: (String) -> Void
-
-    private var targets: [ChangeLink] { message.links.compactMap { $0 } }
-
-    private var isUser: Bool { message.role == .user }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            if isUser { Spacer(minLength: 48) }
-
-            VStack(alignment: .leading, spacing: 8) {
-                if let thumb = message.imageThumb, let image = NSImage(data: thumb) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxHeight: 180)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                }
-
-                if let note = message.fallbackNote {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Icon("warning", size: 12)
-                        Text(note)
-                    }
-                    .font(FN.small)
-                    .foregroundStyle(p.danger.opacity(0.85))
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-
-                richText(message.content)
-                    .font(.system(size: 15))
-                    .lineSpacing(2)
-                    .foregroundStyle(message.isError ? p.danger : p.text)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if !message.filed.isEmpty {
-                    FlowLayout(spacing: 6, alignment: .leading) {
-                        ForEach(Array(message.filed.enumerated()), id: \.offset) { index, label in
-                            if let link = message.links.indices.contains(index) ? message.links[index] : nil {
-                                Button { onJump(link, targets) } label: {
-                                    Chip(label)
-                                }
-                                .buttonStyle(.fn)
-                                .help("Show this")
-                            } else {
-                                Chip(label)
-                            }
-                        }
-                        if let first = targets.first {
-                            Button { onJump(first, targets) } label: {
-                                HStack(spacing: 4) {
-                                    Text(targets.count == 1 ? "Show" : "Show changes (\(targets.count))")
-                                    Icon("arrowRight", size: 13)
-                                }
-                                .font(FN.font(12, .medium))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(p.accent, in: Capsule())
-                            }
-                            .buttonStyle(.fn)
-                        }
-                    }
-                }
-
-                if !message.sources.isEmpty {
-                    sourceList
-                }
-
-                if message.origin != .cloud {
-                    OnDeviceMark(origin: message.origin, name: message.answererName)
-                } else if let name = message.answererName, engine.chatRunsOnDevice {
-                    // With this Mac first, a cloud answer is the exception: say whose it is.
-                    CloudMark(name: name)
-                }
-
-                if let offer = message.cloudOffer {
-                    cloudQuestion(offer)
-                }
-
-                if message.webTopic != nil || message.canSaveAsNote {
-                    FlowLayout(spacing: 6, alignment: .leading) {
-                        if message.canSaveAsNote {
-                            OfferButton(icon: "noteAdd", title: "Save as note",
-                                        help: "Save this reply to Notes exactly as it is") {
-                                assistant.saveAsNote(message.id)
-                            }
-                        }
-                        if let topic = message.webTopic {
-                            if engine.canSearchWeb {
-                                OfferButton(icon: "sparkle", title: "Ideas from the web",
-                                            help: "Search the web and suggest ideas here. Sends this note to Claude.",
-                                            disabled: assistant.busy != nil) {
-                                    Task { await assistant.searchWeb(topic) }
-                                }
-                            }
-                            OfferButton(icon: "search", title: "Search the web",
-                                        help: "Open a search for “\(topic.noteTitle)” in your browser") {
-                                assistant.openWebSearch(topic)
-                            }
-                        }
-                    }
-                }
-
-                if let txId = message.splitTxId {
-                    Button { onSplit(txId) } label: {
-                        HStack(spacing: 6) {
-                            Icon("users", size: 14)
-                            Text("Split this bill with someone?")
-                        }
-                        .font(FN.body)
-                        .foregroundStyle(p.text)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .overlay(RoundedRectangle(cornerRadius: FN.radius, style: .continuous)
-                            .stroke(p.line, lineWidth: 1))
-                    }
-                    .buttonStyle(.fn)
-                }
-            }
-            .padding(.horizontal, isUser ? 12 : 2)
-            .padding(.vertical, isUser ? 8 : 2)
-            .background(isUser ? p.hover : .clear,
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            // Yours on the right, the assistant's across the panel.
-            .frame(maxWidth: isUser ? 520 : .infinity, alignment: isUser ? .trailing : .leading)
-            .transition(.move(edge: isUser ? .trailing : .leading).combined(with: .opacity))
-        }
-    }
-
-    /// The end of a local reply, asked like a person would: "Want me to look
-    /// this up online with OpenRouter?" Replying "yes" accepts; so does the link.
-    private func cloudQuestion(_ offer: CloudOffer) -> some View {
-        var line = AttributedString("Want me to ")
-        var link = AttributedString("look this up online with \(offer.name)")
-        link.link = URL(string: "fournotes-offer://cloud")
-        link.foregroundColor = p.accent
-        link.underlineStyle = .single
-        line += link
-        line += AttributedString("?")
-        return Text(line)
-            .font(.system(size: 15))
-            .foregroundStyle(p.muted)
-            .environment(\.openURL, OpenURLAction { _ in
-                Task { await assistant.askCloud(offer) }
-                return .handled
-            })
-            .help("Reply “yes”, or click. Sends this question and the notes it mentions to \(offer.name).")
-            .transition(.opacity)
-    }
-
-    /// The pages a web answer cites, as links.
-    private var sourceList: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("SOURCES")
-                .font(FN.font(11, .medium)).tracking(0.5)
-                .foregroundStyle(p.faint)
-            ForEach(message.sources, id: \.url) { source in
-                if let url = URL(string: source.url) {
-                    Link(destination: url) {
-                        HStack(spacing: 6) {
-                            Icon("link", size: 12)
-                            Text(source.title).lineLimit(1)
-                            Text(url.host() ?? "").foregroundStyle(p.faint).lineLimit(1)
-                        }
-                        .font(FN.small)
-                        .foregroundStyle(p.accent)
-                    }
-                    .help(source.url)
-                }
-            }
-        }
-    }
-
-    /// Models reply in Markdown, so it is parsed rather than shown raw.
-    /// `inlineOnlyPreservingWhitespace` keeps the line breaks a reply relies on.
-    private func richText(_ text: String) -> Text {
-        let options = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        guard let parsed = try? AttributedString(markdown: text, options: options) else {
-            return Text(text)
-        }
-        return Text(parsed)
-    }
-}
-
 // MARK: - Bits
-
-/// A next step offered under a reply: "Search the web".
-private struct OfferButton: View {
-    @Environment(\.palette) private var p
-    @State private var hovering = false
-    let icon: String
-    let title: String
-    var help: String
-    var disabled = false
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Icon(icon, size: 14)
-                Text(title)
-            }
-            .font(FN.font(13, .medium))
-            .foregroundStyle(hovering ? p.text : p.muted)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(hovering ? p.hover : .clear, in: Capsule())
-            .overlay(Capsule().stroke(p.line, lineWidth: 1))
-            .contentShape(Capsule())
-            .motion(hovering, Motion.quick)
-        }
-        .buttonStyle(.fn)
-        .disabled(disabled)
-        .opacity(disabled ? 0.5 : 1)
-        .help(help)
-        .onHover { hovering = $0 && !disabled }
-    }
-}
 
 /// A quiet "On this Mac" mark: which replies Apple Intelligence worked out
 /// locally, with the reason on hover. It replaces a sentence that used to be
 /// appended to the reply — and then read back to the model as history.
-private struct OnDeviceMark: View {
+struct OnDeviceMark: View {
     @Environment(\.palette) private var p
     let origin: ReplyOrigin
     /// "LM Studio" or "Apple Intelligence", for the hover text.
@@ -756,7 +329,7 @@ private struct OnDeviceMark: View {
 }
 
 /// "Cloud · OpenRouter": a reply that was asked of a cloud model.
-private struct CloudMark: View {
+struct CloudMark: View {
     @Environment(\.palette) private var p
     let name: String
 
@@ -775,10 +348,9 @@ private struct CloudMark: View {
     }
 }
 
-/// The assistant folded into the corner. Alive without being busy: the
-/// sparkle breathes, a soft light passes over the words every few seconds,
-/// and it lifts under the pointer. All of it is Core Animation, so an idle
-/// pill costs nothing, and all of it stops with Reduce Motion.
+/// The assistant folded into the corner: a floating pill. Alive without being busy:
+/// the sparkle breathes, a soft light passes over the words now and then, and it lifts
+/// under the pointer. All of it stops with Reduce Motion.
 private struct AskPill: View {
     @Environment(\.palette) private var p
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -787,47 +359,35 @@ private struct AskPill: View {
     let action: () -> Void
 
     @State private var hovering = false
-    @State private var spin = false
     @State private var shown = false
 
     var body: some View {
+        let label = busy ?? "Ask Four Notes"
         Button(action: action) {
             HStack(spacing: 8) {
                 ZStack {
-                    Icon("sparkle", size: 15)
-                        .foregroundStyle(p.accent)
-                        .phaseAnimator(reduceMotion ? [false] : [false, true]) { icon, up in
-                            icon.scaleEffect(up ? 1.16 : 0.88)
-                                .rotationEffect(.degrees(up ? 16 : -10))
-                        } animation: { _ in .easeInOut(duration: 1.6) }
                     if busy != nil {
-                        Circle()
-                            .trim(from: 0, to: 0.72)
-                            .stroke(p.accent.opacity(0.8), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-                            .frame(width: 24, height: 24)
-                            .rotationEffect(.degrees(spin ? 360 : 0))
-                            .onAppear {
-                                guard !reduceMotion else { return }
-                                spin = false
-                                withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) { spin = true }
-                            }
-                            .transition(.opacity)
+                        BusyRing(color: p.foreground).scaleEffect(1.35)
                     }
+                    Icon("sparkle", size: 15)
+                        .foregroundStyle(p.foreground)
+                        .phaseAnimator(reduceMotion ? [false] : [false, true]) { icon, up in
+                            icon.scaleEffect(up ? 1.16 : 0.88).rotationEffect(.degrees(up ? 16 : -10))
+                        } animation: { _ in .easeInOut(duration: 1.6) }
                 }
-                .frame(width: 24, height: 24)
+                .frame(width: 22, height: 22)
 
-                Text(busy ?? "Ask Four Notes")
-                    .font(FN.font(13.5))
-                    .foregroundStyle(hovering ? p.text : p.muted)
+                Text(label)
+                    .font(FN.font(13))
+                    .foregroundStyle(hovering ? p.foreground : p.textSecondary)
                     .lineLimit(1)
                     // A band of light that crosses the words now and then.
                     .overlay {
                         GeometryReader { proxy in
                             let width = proxy.size.width
-                            LinearGradient(colors: [.clear, p.text.opacity(0.6), .clear],
+                            LinearGradient(colors: [.clear, p.foreground.opacity(0.6), .clear],
                                            startPoint: .leading, endPoint: .trailing)
                                 .frame(width: width * 0.45)
-                                // Crosses in 1.4s, then rests for 3s.
                                 .keyframeAnimator(initialValue: -0.6, repeating: true) { band, x in
                                     band.offset(x: width * x)
                                 } keyframes: { _ in
@@ -835,25 +395,26 @@ private struct AskPill: View {
                                     LinearKeyframe(1.2, duration: 3)
                                 }
                         }
-                        .mask(Text(busy ?? "Ask Four Notes").font(FN.font(13.5)).lineLimit(1))
+                        .mask(Text(label).font(FN.font(13)).lineLimit(1))
                         .allowsHitTesting(false)
                         .opacity(reduceMotion ? 0 : 1)
                     }
 
                 if unread {
-                    Circle().fill(p.danger).frame(width: 8, height: 8)
+                    Circle().fill(p.accent).frame(width: 8, height: 8)
                         .transition(.scale(scale: 0.2).combined(with: .opacity))
                 }
             }
-            .padding(.leading, 10)
+            .padding(.leading, 12)
             .padding(.trailing, 16)
-            .frame(height: 42)
-            .background(p.panel, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(hovering ? p.accent.opacity(0.45) : p.line, lineWidth: 1))
-            .shadow(color: p.shadowStrong, radius: hovering ? 20 : 14, y: hovering ? 8 : 5)
-            .scaleEffect(hovering ? 1.04 : 1, anchor: .bottomTrailing)
-            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .frame(height: 40)
+            .background {
+                Capsule().fill(p.surface)
+                    .shadow(color: p.shadowStrong, radius: hovering ? 22 : 16, y: hovering ? 10 : 6)
+            }
+            .overlay(Capsule().strokeBorder(hovering ? p.borderStrong : p.border, lineWidth: 1))
+            .scaleEffect(hovering ? 1.03 : 1, anchor: .bottomTrailing)
+            .contentShape(Capsule())
         }
         .buttonStyle(.fn)
         .onHover { hovering = $0 }
@@ -870,59 +431,6 @@ private struct AskPill: View {
             guard !reduceMotion else { shown = true; return }
             withAnimation(.spring(response: 0.45, dampingFraction: 0.7)) { shown = true }
         }
-    }
-}
-
-/// Today's starters: an icon and a word, on a soft pill.
-private struct StarterChip: View {
-    @Environment(\.palette) private var p
-    @State private var hovering = false
-    let icon: String
-    let title: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Icon(icon, size: 15)
-                Text(title)
-            }
-            .font(FN.font(14))
-            .foregroundStyle(hovering ? p.text : p.muted)
-            .padding(.horizontal, 14)
-            .frame(height: 36)
-            .background(hovering ? p.hover.opacity(2) : p.panel.opacity(0.75),
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(p.line, lineWidth: 1))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.fn)
-        .onHover { hovering = $0 }
-        .motion(hovering, Motion.quick)
-    }
-}
-
-private struct SuggestionChip: View {
-    @Environment(\.palette) private var p
-    @State private var hovering = false
-    let text: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(text)
-                .font(FN.body)
-                .foregroundStyle(hovering ? p.text : p.muted)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-                .background(hovering ? p.hover : .clear, in: Capsule())
-                .overlay(Capsule().stroke(p.line, lineWidth: 1))
-                .scaleEffect(hovering ? 1.02 : 1)
-                .motion(hovering, Motion.quick)
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.fn)
-        .onHover { hovering = $0 }
     }
 }
 

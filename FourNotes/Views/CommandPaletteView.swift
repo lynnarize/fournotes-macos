@@ -36,7 +36,7 @@ struct CommandPaletteView: View {
         let items = items
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Icon("search", size: 16).foregroundStyle(p.faint)
+                Icon("search", size: 16).foregroundStyle(p.textMuted)
                 TextField("Search, or: t task · n note · $ coffee 25k · s quick note · ? question",
                           text: $query)
                     .textFieldStyle(.plain)
@@ -45,10 +45,10 @@ struct CommandPaletteView: View {
                     .focused($focused)
                     .onSubmit { run(items.indices.contains(active) ? items[active] : nil) }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 15)
 
-            Divider().overlay(p.line)
+            Rectangle().fill(p.borderSubtle).frame(height: 1)
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -61,11 +61,10 @@ struct CommandPaletteView: View {
                         }
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             if index == 0 || items[index - 1].group != item.group {
-                                Text(item.group.uppercased())
-                                    .font(FN.font(11, .medium))
-                                    .tracking(0.5)
-                                    .foregroundStyle(p.faint)
-                                    .padding(.horizontal, 16)
+                                Text(item.group)
+                                    .font(FN.small)
+                                    .foregroundStyle(p.textMuted)
+                                    .padding(.horizontal, 10)
                                     .padding(.top, 8)
                                     .padding(.bottom, 4)
                             }
@@ -84,7 +83,7 @@ struct CommandPaletteView: View {
                                 }
                         }
                     }
-                    .padding(.vertical, 4)
+                    .padding(6)
                     .animation(Motion.quick, value: items.map(\.id))
                 }
                 .frame(maxHeight: 380)
@@ -96,10 +95,8 @@ struct CommandPaletteView: View {
         }
         .coordinateSpace(.named(Self.space))
         .frame(width: 620)
-        .background(p.bg)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(p.line, lineWidth: 1))
-        .shadow(color: .black.opacity(0.25), radius: 24, y: 10)
+        .clipShape(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
+        .floating(p)
         .onAppear {
             query = ""
             active = 0
@@ -136,18 +133,17 @@ struct CommandPaletteView: View {
     private func row(_ item: Item, selected: Bool) -> some View {
         Button { run(item) } label: {
             HStack(spacing: 8) {
-                Icon(item.icon, size: 14).foregroundStyle(p.muted)
-                Text(item.label).font(FN.body).foregroundStyle(p.text).lineLimit(1)
+                Icon(item.icon, size: 15).foregroundStyle(p.textSecondary)
+                Text(item.label).font(FN.font(13.5)).foregroundStyle(p.foreground).lineLimit(1)
                 Spacer(minLength: 12)
                 if let hint = item.hint, !hint.isEmpty {
-                    Text(hint).font(FN.small).foregroundStyle(p.faint).lineLimit(1)
+                    Text(hint).font(FN.small).foregroundStyle(p.textMuted).lineLimit(1)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? p.hover : .clear)
-            .scaleEffect(selected ? 1.01 : 1)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+            .background(selected ? p.accentSubtle : .clear,
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .motion(selected, Motion.quick)
             .contentShape(Rectangle())
         }

@@ -98,14 +98,14 @@ struct FinanceDashboard: View {
                  pct: FinanceMath.pct(spent, prevSpent), upIsGood: false,
                  diff: "\(spent >= prevSpent ? "+" : "−")\(Money.format(abs(spent - prevSpent), cur, compact: true))",
                  openLabel: "Show or hide the spending chart",
-                 value: AnyView(MoneyText(amount: spent, currency: cur, size: 28, weight: .semibold)),
+                 value: AnyView(MoneyText(amount: spent, currency: cur, size: 28)),
                  compact: compactValue(spent),
                  open: { chartOpen.toggle() }),
             Stat(label: "Income", icon: "download",
                  pct: FinanceMath.pct(income, prevIncome), upIsGood: true,
                  diff: "\(income >= prevIncome ? "+" : "−")\(Money.format(abs(income - prevIncome), cur, compact: true))",
                  openLabel: "Show transactions",
-                 value: AnyView(MoneyText(amount: income, currency: cur, size: 28, weight: .semibold)),
+                 value: AnyView(MoneyText(amount: income, currency: cur, size: 28)),
                  compact: compactValue(income),
                  open: onOpenTransactions),
             Stat(label: "Transactions", icon: "bill",
@@ -113,74 +113,52 @@ struct FinanceDashboard: View {
                  diff: "\(monthTxs.count >= prevTxs.count ? "+" : "−")\(abs(monthTxs.count - prevTxs.count))",
                  openLabel: "Show transactions",
                  value: AnyView(Text("\(monthTxs.count)")
-                    .font(.system(size: 28, weight: .semibold)).monospacedDigit()),
+                    .font(FN.display(28)).tracking(FN.displayTracking(28)).monospacedDigit()),
                  open: onOpenTransactions),
         ]
     }
 
     private func compactValue(_ amount: Double) -> AnyView {
         AnyView(Text(Money.format(amount, cur, compact: true))
-            .font(.system(size: 28, weight: .semibold)).monospacedDigit().tracking(-0.4))
+            .font(FN.display(28)).monospacedDigit().tracking(FN.displayTracking(28)))
     }
 
-    /// Three cards of one height. The value never wraps: the change pill
-    /// drops below it when the card is narrow, and a value too long even
-    /// for a line of its own is shortened ("Rp2.9M"). It used to break
-    /// "Rp 2,891,500" over three lines and push that card taller than the rest.
-    /// The three numbers, each on its own soft colour with its icon.
+    /// The month in numbers, as on the web: one strip, hairlines between. Spent opens
+    /// the chart; the others open the transactions.
     private var statRow: some View {
-        let tints = [p.boardRed, p.finA, p.finB]
-        return HStack(alignment: .top, spacing: 16) {
+        HStack(spacing: 0) {
             ForEach(Array(stats.enumerated()), id: \.offset) { index, stat in
-                pastelCard(stat, tint: tints[index % tints.count],
-                           selected: index == 0 && chartOpen)
+                if index > 0 { Rectangle().fill(p.borderSubtle).frame(width: 1) }
+                KpiCell(selected: index == 0 && chartOpen, action: stat.open) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(stat.label).font(FN.font(13)).foregroundStyle(p.textSecondary).lineLimit(1)
+                            Spacer(minLength: 8)
+                            Icon(stat.icon, size: 15).foregroundStyle(p.textMuted)
+                        }
+                        statValue(stat)
+                        DeltaPill(pct: stat.pct, upIsGood: stat.upIsGood)
+                    }
+                }
+                .help(stat.openLabel)
             }
         }
         .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func pastelCard(_ stat: Stat, tint: Color, selected: Bool) -> some View {
-        Button(action: stat.open) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    statValue(stat)
-                    Text(stat.label).font(FN.body).foregroundStyle(p.muted).lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Icon(stat.icon, size: 24)
-                    .foregroundStyle(tint)
-                    .frame(width: 54, height: 54)
-                    .background(p.bg.opacity(0.75), in: Circle())
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .background(p.mix(tint, 0.16), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(selected ? tint.opacity(0.6) : .clear, lineWidth: 1.5))
-            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        }
-        .buttonStyle(.fn)
-        .help(stat.openLabel)
+        .background(p.surface, in: RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous).strokeBorder(p.border, lineWidth: 1))
         .entrance()
     }
 
+    /// The value never wraps: a value too long for the cell is shortened ("Rp2.9M").
     private func statValue(_ stat: Stat) -> some View {
-        let value = stat.value.foregroundStyle(p.text).lineLimit(1).fixedSize()
-        let pill = DeltaPill(pct: stat.pct, upIsGood: stat.upIsGood).fixedSize()
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) { value; pill }
-            VStack(alignment: .leading, spacing: 6) { value; pill }
+        ViewThatFits(in: .horizontal) {
+            stat.value.foregroundStyle(p.foreground).lineLimit(1).fixedSize()
             if let compact = stat.compact {
-                VStack(alignment: .leading, spacing: 6) {
-                    compact.foregroundStyle(p.text).lineLimit(1).fixedSize()
-                    pill
-                }
+                compact.foregroundStyle(p.foreground).lineLimit(1).fixedSize()
             }
-            VStack(alignment: .leading, spacing: 6) {
-                (stat.compact ?? stat.value).foregroundStyle(p.text)
-                    .lineLimit(1).minimumScaleFactor(0.6)
-                pill
-            }
+            (stat.compact ?? stat.value).foregroundStyle(p.foreground)
+                .lineLimit(1).minimumScaleFactor(0.6)
         }
     }
 
@@ -228,7 +206,7 @@ struct FinanceDashboard: View {
 
                 HStack(spacing: 8) {
                     MoneyText(amount: chartView == "year" ? yearToDate : spent, currency: cur,
-                              size: 29, weight: .semibold)
+                              size: 29)
                         .foregroundStyle(p.text)
                     if chartView == "year" {
                         DeltaPill(pct: FinanceMath.pct(yearToDate, lastYearToDate))
@@ -285,7 +263,7 @@ struct FinanceDashboard: View {
                             Icon(categoryIcon(category), size: 16)
                                 .foregroundStyle(p.accent)
                                 .frame(width: 32, height: 32)
-                                .background(p.accent.opacity(0.14),
+                                .background(p.accentSubtle,
                                             in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
                             Text(category)
                                 .font(FN.bodyMedium).foregroundStyle(p.text)
@@ -450,7 +428,7 @@ struct FinanceDashboard: View {
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(item.title)
-                            .font(.system(size: 15, weight: .medium)).foregroundStyle(p.text).lineLimit(1)
+                            .font(FN.font(14, .medium)).foregroundStyle(p.text).lineLimit(1)
                         HStack(spacing: 0) {
                             Text("\(item.sub) · ")
                             // The amount is the point; the label gives way first.
@@ -488,7 +466,7 @@ struct FinanceDashboard: View {
                     Icon("check", size: 18)
                         .foregroundStyle(p.ok)
                         .frame(width: 40, height: 40)
-                        .background(p.ok.opacity(0.10),
+                        .background(p.successSubtle,
                                     in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
                     Text("All clear: budgets on track, nobody owes you.")
                         .font(FN.body).foregroundStyle(p.text)
@@ -499,16 +477,15 @@ struct FinanceDashboard: View {
             ForEach(alerts) { alert in
                 HStack(spacing: 12) {
                     Icon("warning", size: 19)
-                        .foregroundStyle(alert.critical ? p.danger : p.boardAmberInk)
-                        .frame(width: 44, height: 44)
-                        .background((alert.critical ? p.danger : p.boardAmber).opacity(alert.critical ? 0.09 : 0.14),
-                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .foregroundStyle(alert.critical ? p.danger : p.warning)
+                        .frame(width: 40, height: 40)
+                        .background(alert.critical ? p.dangerSubtle : p.warningSubtle, in: Circle())
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(alert.title)
-                            .font(.system(size: 15, weight: .medium)).foregroundStyle(p.text).lineLimit(1)
+                            .font(FN.font(14, .medium)).foregroundStyle(p.text).lineLimit(1)
                         HStack(spacing: 6) {
-                            Text(alert.place).foregroundStyle(p.accent)
+                            Text(alert.place).foregroundStyle(p.textSecondary)
                             Circle().fill(p.faint).frame(width: 4, height: 4)
                             Text(alert.detail).foregroundStyle(p.muted).lineLimit(1)
                         }
@@ -558,7 +535,7 @@ struct FinanceDashboard: View {
             VStack(alignment: .leading, spacing: 14) {
                 Text(isCurrent ? "\(Money.format(spent, cur, compact: true)) spent so far this \(monthName)"
                                : "\(Money.format(spent, cur, compact: true)) spent in \(Fmt.monthYear(month))")
-                    .font(FN.serif(30))
+                    .font(FN.display(30))
                     .tracking(-0.5)
                     .foregroundStyle(p.text)
                     .fixedSize(horizontal: false, vertical: true)
@@ -611,8 +588,32 @@ struct FinanceDashboard: View {
         }
         .padding(28)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(p.panel, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(p.line, lineWidth: 1))
+        .background(p.surface, in: RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous).strokeBorder(p.border, lineWidth: 1))
         .entrance()
+    }
+}
+
+/// One cell of the numbers strip: tinted under the pointer, on the accent wash while
+/// what it opens is showing.
+private struct KpiCell<Content: View>: View {
+    @Environment(\.palette) private var p
+    @State private var hovering = false
+    let selected: Bool
+    let action: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Button(action: action) {
+            content()
+                .padding(.horizontal, 22)
+                .padding(.vertical, 18)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(selected ? p.accentSubtle : (hovering ? p.hover : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.fn)
+        .onHover { hovering = $0 }
+        .motion(hovering || selected, Motion.quick)
     }
 }

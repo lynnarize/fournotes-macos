@@ -1,18 +1,61 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// A board like Notion's: To Do -> Doing -> Done, with a task panel beside it.
-// Ported from src/components/TodoView.tsx.
+// A board (To do, Doing, Done) with the open task in a panel beside it, as on the web
+// (src/components/TodoView.tsx). Columns are neutral; colour marks only real status
+// (due soon, overdue), always with words. Filters narrow the board; they never change
+// a task.
 
 private let DONE_SHOWN = 30
 /// Narrower than this and labels, titles and dates start breaking mid-word;
 /// the board scrolls sideways instead, as the web app's does.
 private let COLUMN_MIN: CGFloat = 250
 
-extension BoardColumn {
+/// What the board shows: everything, or one kind of task.
+private enum BoardFilter: String, CaseIterable {
+    case all, week, repeating, bills, linked
+
     var label: String {
         switch self {
-        case .todo: return "To Do"
+        case .all: return "All"
+        case .week: return "Due this week"
+        case .repeating: return "Repeating"
+        case .bills: return "Bills"
+        case .linked: return "Linked to a note"
+        }
+    }
+
+    func test(_ t: Todo) -> Bool {
+        switch self {
+        case .all: return true
+        case .week: return DateKit.date(t.dueAt).map { $0 < Date().addingTimeInterval(7 * 86_400) } ?? false
+        case .repeating: return t.rrule != nil
+        case .bills: return t.bill != nil
+        case .linked: return t.noteId != nil
+        }
+    }
+}
+
+extension BoardColumn {
+    var empty: String {
+        switch self {
+        case .todo: return "Nothing to do"
+        case .doing: return "Nothing in progress"
+        case .done: return "Nothing done yet"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .todo: return "Add a task, or drag one back here."
+        case .doing: return "Drag a task here when you start it."
+        case .done: return "Finished tasks land here."
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .todo: return "To do"
         case .doing: return "Doing"
         case .done: return "Done"
         }
@@ -51,12 +94,13 @@ struct TodoView: View {
     @State private var expanded = false
     @State private var cleanedUp = false
     @State private var boardWidth: CGFloat = 0
+    @State private var filter: BoardFilter = .all
 
     private var live: [Todo] { store.liveTodos }
     private var openTodo: Todo? { live.first { $0.id == openId } }
 
     private func column(_ c: BoardColumn) -> [Todo] {
-        let items = live.filter { $0.column == c }
+        let items = live.filter { $0.column == c && filter.test($0) }
         // Soonest first (overdue on top); undated tasks after dated ones, newest first.
         if c == .done {
             return items.sorted { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }
@@ -110,26 +154,31 @@ struct TodoView: View {
         }
     }
 
+    /// "2 open, 1 done this week", New, and the filters.
     private var toolbar: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 6) {
-                Icon("todo", size: 16)
-                Text("Board").font(FN.bodyMedium)
+        let weekAgo = Date().addingTimeInterval(-7 * 86_400)
+        let doneThisWeek = live.filter { $0.done && (DateKit.date($0.completedAt).map { $0 >= weekAgo } ?? false) }.count
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Text("\(live.filter { !$0.done }.count) open, \(doneThisWeek) done this week")
+                    .font(FN.font(14))
+                    .monospacedDigit()
+                    .foregroundStyle(p.textSecondary)
+                Spacer()
+                PrimaryButton(title: "New", icon: "plus") { create(.todo) }
             }
-            .foregroundStyle(p.text)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-            .background(p.hover, in: Capsule())
-
-            Text("\(live.filter { !$0.done }.count) open")
-                .font(FN.body)
-                .foregroundStyle(p.faint)
-
-            Spacer()
-
-            PrimaryButton(title: "New", icon: "plus") { create(.todo) }
+            if !live.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(BoardFilter.allCases, id: \.self) { f in
+                        PillButton(title: f.label, selected: filter == f) {
+                            withAnimation(Motion.standard) { filter = f }
+                        }
+                    }
+                }
+            }
         }
-        .padding(.bottom, 16)
+        .padding(.top, -8)
+        .padding(.bottom, 20)
     }
 
     /// The three columns share the width, never narrower than COLUMN_MIN;
@@ -160,30 +209,45 @@ struct TodoView: View {
     private func columnView(_ col: BoardColumn) -> some View {
         let items = column(col)
         let shown = col == .done && !showAllDone ? Array(items.prefix(DONE_SHOWN)) : items
-        let hue = col.hue(p)
         let isDropTarget = dropTarget == col && dragging != nil
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(col.label)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(p.text)
+                    .font(FN.font(13.5, .medium))
+                    .foregroundStyle(p.foreground)
                     .lineLimit(1)
                     .fixedSize()
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(p.mix(hue, p.boardLabelMix),
-                                in: RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous))
                 Text("\(items.count)")
-                    .font(FN.body).monospacedDigit()
-                    .foregroundStyle(col.ink(p))
+                    .font(FN.font(13)).monospacedDigit()
+                    .foregroundStyle(p.textMuted)
                     .fixedSize()
+                    .contentTransition(.numericText())
                 Spacer()
-                IconButton("plus", size: 18, box: 30, tone: col.ink(p),
-                           help: "Add to \(col.label)") { create(col) }
+                IconButton("plus", size: 16, box: 30, help: "Add to \(col.label)") { create(col) }
             }
-            .padding(.horizontal, 6)
-            .padding(.top, 4)
+            .padding(.leading, 12)
+            .padding(.trailing, 2)
+            .frame(height: 40)
+
+            if shown.isEmpty {
+                VStack(spacing: 4) {
+                    Text(filter == .all ? col.empty : "Nothing here")
+                        .font(FN.font(13.5, .medium))
+                        .foregroundStyle(p.foreground)
+                    Text(filter == .all ? col.hint : "No tasks in this column match the filter.")
+                        .font(FN.font(12.5))
+                        .foregroundStyle(p.textMuted)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 24)
+                .overlay(RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous)
+                    .strokeBorder(p.borderStrong, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
+                .transition(.opacity)
+            }
 
             ForEach(shown) { todo in
                 TodoCard(todo: todo, column: col, selected: openId == todo.id,
@@ -199,38 +263,22 @@ struct TodoView: View {
             .animation(Motion.list, value: items.map(\.id))
 
             if col == .done, items.count > shown.count {
-                Button { showAllDone = true } label: {
-                    Text("Show \(items.count - shown.count) older")
-                        .font(FN.body)
-                        .foregroundStyle(col.ink(p))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .contentShape(Rectangle())
+                GhostButton(action: { showAllDone = true }) {
+                    Text("Show \(items.count - shown.count) older").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.fn)
             }
 
             Button { create(col) } label: {
-                HStack(spacing: 8) {
-                    Icon("plus", size: 16)
-                    Text("New task").font(.system(size: 15)).lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .foregroundStyle(col.ink(p))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(hue.opacity(0.28), lineWidth: 1))
-                .contentShape(Rectangle())
+                NewTaskRow()
             }
             .buttonStyle(.fn)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .top)
-        .background(p.mix(hue, p.boardColMix),
-                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .stroke(hue.opacity(isDropTarget ? 0.6 : 0), lineWidth: 2))
+        .background(isDropTarget ? p.accent.mixed(with: p.surfaceMuted, ratio: 0.95) : p.surfaceMuted,
+                    in: RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous)
+            .strokeBorder(p.accent.opacity(isDropTarget ? 1 : 0), lineWidth: 1.5))
         .motion(isDropTarget, Motion.quick)
         .onDrop(of: [.text], delegate: ColumnDrop(column: col, dragging: $dragging,
                                                   dropTarget: $dropTarget, move: move))
@@ -345,31 +393,34 @@ private struct TodoCard: View {
         !todo.done && (DateKit.date(todo.dueAt).map { $0 < Date() } ?? false)
     }
 
-    private var priorityDot: Color? {
-        guard !todo.done, todo.priority != .medium else { return nil }
-        return todo.priority == .high ? p.danger : p.faint
+    /// Status, said in words: overdue, or due within a day.
+    private var status: (text: String, tone: Color, subtle: Color)? {
+        guard !todo.done, let due = DateKit.date(todo.dueAt) else { return nil }
+        if due < Date() { return ("Overdue", p.danger, p.dangerSubtle) }
+        if due < Date().addingTimeInterval(86_400) { return ("Due soon", p.warning, p.warningSubtle) }
+        return nil
     }
 
     private var hasMeta: Bool {
-        note != nil || todo.bill != nil || todo.rrule != nil || todo.dueAt != nil
-            || (todo.remindAt != nil && !todo.done)
+        note != nil || todo.rrule != nil || todo.dueAt != nil
+            || (todo.remindAt != nil && !todo.done) || (todo.priority == .high && !todo.done)
     }
 
     var body: some View {
-        let hue = column.hue(p)
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 12) {
             Button(action: onToggle) {
                 ZStack {
                     Circle()
-                        .strokeBorder(todo.done ? p.accent : p.faint, lineWidth: 1.5)
+                        .strokeBorder(todo.done ? p.accent : (hovering ? p.textMuted : p.borderStrong), lineWidth: 1.5)
                         .background(Circle().fill(todo.done ? p.accent : .clear))
-                        .frame(width: 20, height: 20)
+                        .frame(width: 18, height: 18)
                     if todo.done {
-                        Icon("check", size: 12).foregroundStyle(.white)
+                        Icon("check", size: 11, weight: 2.4).foregroundStyle(p.accentForeground)
                             .transition(.scale(scale: 0.4).combined(with: .opacity))
                     }
                 }
-                .contentShape(Circle())
+                .padding(.top, 1)
+                .contentShape(Circle().inset(by: -6))
                 .motion(todo.done, Motion.standard)
             }
             .buttonStyle(.fn)
@@ -377,43 +428,44 @@ private struct TodoCard: View {
 
             Button(action: onOpen) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(todo.title.isEmpty ? "New task" : todo.title)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(todo.done || todo.title.isEmpty ? p.faint : p.text)
-                        .strikethrough(todo.done)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(todo.title.isEmpty ? "New task" : todo.title)
+                            .font(FN.font(13.5))
+                            .foregroundStyle(todo.done || todo.title.isEmpty ? p.textMuted : p.foreground)
+                            .strikethrough(todo.done)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let bill = todo.bill {
+                            Text(Money.format(bill.amount, bill.currency ?? store.settings.currency))
+                                .font(FN.font(12.5))
+                                .monospacedDigit()
+                                .foregroundStyle(p.textSecondary)
+                        }
+                    }
 
-                    if hasMeta {
-                        FlowLayout(spacing: 4, alignment: .leading) {
-                            if let due = todo.dueAt {
-                                Chip(tone: overdue ? p.danger : nil) {
-                                    Icon("calendar", size: 11)
-                                    Text((overdue ? "Overdue · " : "") + Fmt.due(due))
+                    if hasMeta || status != nil {
+                        FlowLayout(spacing: 6, alignment: .leading) {
+                            if let status {
+                                HStack(spacing: 5) {
+                                    Circle().fill(status.tone).frame(width: 6, height: 6)
+                                    Text(status.text)
                                 }
+                                .font(FN.font(11.5, .medium))
+                                .foregroundStyle(status.tone)
+                                .padding(.horizontal, 8)
+                                .frame(height: 20)
+                                .background(status.subtle, in: Capsule())
                             }
+                            if let due = todo.dueAt { meta("calendar", Fmt.due(due)) }
                             if let remind = todo.remindAt, !todo.done {
-                                Chip(tone: nil) {
-                                    Icon("bell", size: 11)
-                                    if todo.dueAt == nil { Text(Fmt.due(remind)) }
-                                }
+                                meta("bell", todo.dueAt == nil ? Fmt.due(remind) : nil)
                             }
                             if let rrule = todo.rrule {
-                                Chip(tone: nil) {
-                                    Icon("repeat", size: 11)
-                                    Text(Recurrence.label(rrule).replacingOccurrences(of: "Every ", with: ""))
-                                }
+                                meta("repeat", Recurrence.label(rrule).replacingOccurrences(of: "Every ", with: ""))
                             }
-                            if let bill = todo.bill {
-                                Chip(Money.format(bill.amount, bill.currency ?? store.settings.currency, compact: true))
-                            }
-                            if let note {
-                                Chip(tone: nil) {
-                                    Icon("link", size: 11)
-                                    Text(note.title.isEmpty ? "Note" : note.title)
-                                }
-                                .frame(maxWidth: 176, alignment: .leading)
-                            }
+                            if let note { meta("link", note.title.isEmpty ? "Note" : note.title).frame(maxWidth: 176, alignment: .leading) }
+                            if todo.priority == .high && !todo.done { meta(nil, "High priority") }
                         }
                         .transition(.opacity.combined(with: .offset(y: -4)))
                     }
@@ -423,24 +475,50 @@ private struct TodoCard: View {
                 .animation(Motion.standard, value: hasMeta)
             }
             .buttonStyle(.fn)
-
-            if let priorityDot {
-                Circle().fill(priorityDot).frame(width: 8, height: 8).padding(.top, 6)
-            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
-        .background(p.mix(hue, p.boardCardMix),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .stroke(selected ? p.accent : hue.opacity(hovering ? 0.3 : 0.14),
-                    lineWidth: selected ? 2 : 1))
-        .shadow(color: p.shadow, radius: hovering ? 5 : 2, y: 1)
+        .padding(14)
+        .background(p.surface, in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous)
+            .strokeBorder(selected ? p.accent : (hovering ? p.borderStrong : p.border), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: FN.radiusControl + 3, style: .continuous)
+            .fill(selected ? p.accentSubtle : .clear).padding(-3))
         .opacity(dragging ? 0.4 : 1)
-        .scaleEffect(dragging ? 0.97 : hovering ? 1.012 : 1)
+        .scaleEffect(dragging ? 0.97 : 1)
         .motion(hovering || dragging || selected, Motion.quick)
         .motion(todo.done, Motion.standard)
         .flashes(nav.isFlashing(todo.id), palette: p)
         .onHover { hovering = $0 }
+    }
+
+    /// One piece of the line under the title: an icon and a few words.
+    private func meta(_ icon: String?, _ text: String?) -> some View {
+        HStack(spacing: 4) {
+            if let icon { Icon(icon, size: 12) }
+            if let text { Text(text).lineLimit(1) }
+        }
+        .font(FN.font(12.5))
+        .foregroundStyle(p.textMuted)
+        .frame(height: 20)
+    }
+}
+
+/// "+ New task" at the foot of a column: plain until hovered.
+private struct NewTaskRow: View {
+    @Environment(\.palette) private var p
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Icon("plus", size: 15)
+            Text("New task").font(FN.font(13.5)).lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(hovering ? p.foreground : p.textMuted)
+        .padding(.horizontal, 12)
+        .frame(height: 38)
+        .background(hovering ? p.hover : .clear, in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .motion(hovering, Motion.quick)
     }
 }

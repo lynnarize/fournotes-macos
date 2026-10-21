@@ -43,7 +43,11 @@ struct ToastStack: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
             ForEach(toasts.toasts) { toast in
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
+                    // As on the web: a small status mark instead of a coloured edge.
+                    Icon(toast.tone == .error ? "warning" : "check", size: 15)
+                        .foregroundStyle(toast.tone == .error ? p.danger : p.success)
+                        .padding(.top, 1)
                     Text(toast.text)
                         .font(FN.body)
                         .foregroundStyle(p.text)
@@ -59,18 +63,10 @@ struct ToastStack: View {
                         .foregroundStyle(p.accent)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
                 .frame(maxWidth: 360, alignment: .leading)
-                .background(p.bg)
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(toast.tone == .error ? p.danger : p.ok)
-                        .frame(width: 3)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: FN.radius, style: .continuous).stroke(p.line, lineWidth: 1))
-                .shadow(color: p.shadowStrong, radius: 12, y: 4)
+                .floating(p, radius: 22)
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .entrance()
             }

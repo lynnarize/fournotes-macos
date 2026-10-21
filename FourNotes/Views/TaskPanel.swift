@@ -65,10 +65,9 @@ struct TaskPanel: View {
                 .frame(maxWidth: .infinity)
             }
         }
-        .background(p.bg)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(p.line, lineWidth: 1))
-        .shadow(color: p.shadow, radius: 10, y: 3)
+        .background(p.surface)
+        .clipShape(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous).strokeBorder(p.border, lineWidth: 1))
         .frame(maxHeight: expanded ? .infinity : 760)
         .onAppear { if isNew { titleFocused = true } }
     }
@@ -138,23 +137,9 @@ struct TaskPanel: View {
     private var properties: some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 2) {
             prop("status", "Status") {
-                HStack(spacing: 4) {
-                    ForEach(BoardColumn.allCases) { col in
-                        Button { onMove(col) } label: {
-                            Text(col.label)
-                                .font(FN.body)
-                                .fontWeight(todo.column == col ? .medium : .regular)
-                                .foregroundStyle(todo.column == col ? p.text : p.faint)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(todo.column == col ? p.mix(col.hue(p), p.boardLabelMix) : .clear,
-                                            in: RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous))
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.fn)
-                    }
-                }
-                .motion(todo.column, Motion.quick)
+                SegmentedTabs(items: BoardColumn.allCases.map { ($0.rawValue, $0.label) },
+                              selection: Binding(get: { todo.column.rawValue },
+                                                 set: { if let col = BoardColumn(rawValue: $0) { onMove(col) } }))
             }
 
             prop("calendar", "Date") {
@@ -334,11 +319,11 @@ struct TaskPanel: View {
                                      @ViewBuilder _ content: () -> Content) -> some View {
         GridRow {
             HStack(spacing: 10) {
-                Icon(icon, size: 17)
+                Icon(icon, size: 15)
                 Text(label).lineLimit(1)
             }
             .font(FN.body)
-            .foregroundStyle(p.muted)
+            .foregroundStyle(p.textMuted)
             .frame(width: 128, alignment: .leading)
             .frame(minHeight: 36)
 
