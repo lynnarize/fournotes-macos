@@ -60,7 +60,7 @@ struct DockScene: View {
             .environment(\.colorScheme, scheme)
             .environment(\.palette, theme.palette(for: scheme))
             .environment(\.dock, style)
-            .tint(style.primary)
+            .tint(style.accent)
             .environmentObject(model.store)
             .environmentObject(model.nav)
             .environmentObject(model.toasts)
@@ -75,7 +75,6 @@ struct DockRoot: View {
     @ObservedObject private var stickies = EdgeStickies.shared
     @EnvironmentObject private var store: Store
     @Environment(\.dock) private var d
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         GeometryReader { proxy in
@@ -94,17 +93,28 @@ struct DockRoot: View {
                                  previous: dock.previousBubble, pulsing: dock.pulsingBubble,
                                  handleCenter: CGPoint(x: x(for: DockGeometry.handleWidth, in: width),
                                                        y: g.centerFromTop),
-                                 handleHalf: g.bodyHeight / 2, edge: dock.edge, width: width, fill: d.surface)
+                                 handleHalf: g.bodyHeight / 2, edge: dock.edge, width: width,
+                                 fill: d.materialSolid)
                 }
 
-                shape
-                    .fill(d.surface)
-                    // No shadow on the open drawer: it spread a grey band over the
-                    // app beside it. Its thin edge is enough to set it apart.
-                    .shadow(color: .black.opacity(dock.isOpen ? 0 : 0.25),
-                            radius: dock.isOpen ? 0 : 5, y: dock.isOpen ? 0 : 1)
-                // A faint light edge, so the dark body reads against dark apps.
-                shape.stroke(scheme == .dark ? Color.white.opacity(0.1) : d.line, lineWidth: 1)
+                // The closed handle's soft shadow, kept outside it: under the
+                // see-through body it would darken the handle itself. None on
+                // the open drawer: it spread a grey band over the app beside
+                // it, and the thin edge is enough to set it apart.
+                shape.fill(Color.black)
+                    .shadow(color: .black.opacity(0.25), radius: 4, y: 1)
+                    .mask {
+                        Rectangle()
+                            .overlay { shape.fill(Color.black).blendMode(.destinationOut) }
+                            .compositingGroup()
+                    }
+                    .opacity(dock.isOpen ? 0 : 1)
+                    .allowsHitTesting(false)
+                // The desktop behind, blurred, under a tint of the theme.
+                DockMaterial(shape: shape)
+                shape.fill(d.material)
+                // A hairline edge, so the body reads against apps of its own colour.
+                shape.stroke(d.hair, lineWidth: 1)
 
                 ZStack(alignment: .topLeading) {
                     HandleFace(dock: dock)
@@ -159,7 +169,7 @@ private struct HandleFace: View {
         let done = Glance.doneToday(store.liveTodos).count
         let total = due.count + done
         VStack(spacing: 7) {
-            Icon(dock.edge == .right ? "chevronLeft" : "chevron", size: 11, weight: 2.2)
+            Icon(dock.edge == .right ? "chevronLeft" : "chevron", size: 11, weight: 2.6)
                 .foregroundStyle(d.muted)
                 .opacity(dock.hovering ? 1 : 0)
                 .frame(height: dock.hovering ? 11 : 0)
@@ -167,18 +177,21 @@ private struct HandleFace: View {
             if transcriber.phase == .listening || assistant.recording {
                 LiveBadge(levels: transcriber.phase == .listening ? transcriber.levels : [])
             } else {
+                // The ring fills as the day's tasks are done; full, with a
+                // check, once nothing is left.
                 ZStack {
-                    Circle().stroke(d.raised, lineWidth: 2.5)
+                    Circle().inset(by: 1.25).stroke(d.track, lineWidth: 2.5)
                     Circle()
-                        .trim(from: 0, to: total == 0 ? 0 : CGFloat(done) / CGFloat(total))
-                        .stroke(d.teal, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .inset(by: 1.25)
+                        .trim(from: 0, to: due.isEmpty ? 1 : total == 0 ? 0 : CGFloat(done) / CGFloat(total))
+                        .stroke(d.accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                         .animation(Motion.data, value: done)
                     if due.isEmpty {
-                        Icon("check", size: 10, weight: 2.6).foregroundStyle(d.teal)
+                        Icon("check", size: 10, weight: 3.2).foregroundStyle(d.accent)
                     } else {
                         Text("\(due.count)")
-                            .font(FN.font(11, .bold))
+                            .font(FN.font(11, .medium))
                             .monospacedDigit()
                             .foregroundStyle(d.text)
                             .minimumScaleFactor(0.7)
@@ -215,7 +228,7 @@ private struct LiveBadge: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            Circle().fill(d.rose)
+            Circle().fill(d.danger)
                 .frame(width: 8, height: 8)
                 .opacity(pulse ? 0.35 : 1)
                 .animation(Motion.pulse, value: pulse)
@@ -223,7 +236,7 @@ private struct LiveBadge: View {
             HStack(spacing: 2) {
                 ForEach(0..<3, id: \.self) { i in
                     let level = levels.isEmpty ? 0.3 : CGFloat(levels[max(0, levels.count - 1 - i * 3)])
-                    Capsule().fill(d.rose.opacity(0.85))
+                    Capsule().fill(d.danger)
                         .frame(width: 2.5, height: 4 + 14 * level)
                 }
             }
@@ -240,6 +253,7 @@ private struct HandleMenu: View {
     var body: some View {
         Button("Open Drawer") { dock.open() }
         Button("Open Four Notes") { dock.showApp() }
+        Divider()
         Menu("Sticky Notes") {
             ForEach(stickies.shownIds, id: \.self) { id in
                 Button(stickies.note(id).map { $0.title.isEmpty ? "Untitled" : $0.title } ?? "Untitled") {
@@ -251,9 +265,10 @@ private struct HandleMenu: View {
         }
         Divider()
         Picker("Edge", selection: Binding(get: { dock.edge }, set: { dock.setEdge($0) })) {
-            Text("Right edge").tag(DockEdge.right)
-            Text("Left edge").tag(DockEdge.left)
+            Text("Right Edge").tag(DockEdge.right)
+            Text("Left Edge").tag(DockEdge.left)
         }
+        .pickerStyle(.inline)
         Divider()
         Button("Hide Edge Dock") { dock.setEnabled(false) }
     }
@@ -268,7 +283,7 @@ private struct DrawerView: View {
 
     // Dragging a card by its title bar. Everything is measured in the scroll
     // view's own (visible) space, so it holds while the content scrolls.
-    static let space = "dock.drawer"
+    nonisolated static let space = "dock.drawer"
     @State private var frames: [MiniApp: CGRect] = [:]
     @State private var dragging: MiniApp?
     @State private var pointer: CGPoint = .zero
@@ -285,7 +300,8 @@ private struct DrawerView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-                .padding(.horizontal, 20)
+                .padding(.leading, 20)
+                .padding(.trailing, 16)
                 .padding(.top, 16)
                 .padding(.bottom, 12)
 
@@ -293,7 +309,7 @@ private struct DrawerView: View {
                 // One container for both columns, not two stacks: a card that
                 // moved between stacks became a new view mid-drag, the drag
                 // gesture died with the old one, and the card stayed lifted.
-                TwoColumns(spacing: 14) {
+                TwoColumns(spacing: 10) {
                     ForEach(placed, id: \.app) { item in
                         card(item.app, column: item.column)
                             .layoutValue(key: ColumnKey.self, value: visual(item.column))
@@ -305,8 +321,8 @@ private struct DrawerView: View {
                     }
                 }
                 .animation(Motion.standard, value: dock.hidden)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 18)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
             }
             .scrollIndicators(.never)
             .scrollPosition($scroll)
@@ -315,32 +331,42 @@ private struct DrawerView: View {
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { viewport = $0 }
             .coordinateSpace(.named(Self.space))
             .onChange(of: dock.isOpen) { _, open in if !open { dragEnded() } }
-            // Cards slide under a soft edge rather than being cut off.
+            // Cards slide under a soft edge rather than being cut off — while
+            // there is more below; at the end the last card shows whole.
             .mask(VStack(spacing: 0) {
                 Color.black
                 LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 22)
+                    .frame(height: moreBelow ? 22 : 0)
             })
+            .animation(Motion.quick, value: moreBelow)
         }
     }
 
+    private var moreBelow: Bool { scrollY < contentHeight - viewport.height - 1 }
+
     private var header: some View {
         HStack(spacing: 12) {
-            Logo(size: 26)
-            VStack(alignment: .leading, spacing: 2) {
+            Logo(size: 28)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide)))
-                    .font(FN.serif(19))
+                    .font(FN.font(17, .medium))
+                    .tracking(-0.25)
                     .foregroundStyle(d.text)
                 Text(summary)
                     .font(FN.font(12))
-                    .foregroundStyle(d.muted)
+                    .monospacedDigit()
+                    .foregroundStyle(d.secondary)
             }
             Spacer()
-            MenuButton(help: "Customize the drawer", entries: { customizeEntries }) {
-                roundLabel("settings")
+            HStack(spacing: 8) {
+                MenuButton(help: "Customize the drawer", entries: { customizeEntries }) {
+                    HeaderMenuLabel(icon: "sliders")
+                }
+                DockRoundButton(icon: "arrowUpRight", help: "Open Four Notes", size: 30, look: .filled) {
+                    dock.showApp()
+                }
+                DockRoundButton(icon: "x", help: "Close (Esc)", size: 30, look: .filled) { dock.close() }
             }
-            DockRoundButton(icon: "arrowUpRight", help: "Open Four Notes", size: 32) { dock.showApp() }
-            DockRoundButton(icon: "x", help: "Close (Esc)", size: 32) { dock.close() }
         }
     }
 
@@ -353,14 +379,6 @@ private struct DrawerView: View {
         let money = spent == 0 ? "no spending yet"
             : "\(Money.format(spent, store.settings.currency, compact: true)) spent"
         return "\(tasks) · \(money)"
-    }
-
-    private func roundLabel(_ icon: String) -> some View {
-        Icon(icon, size: 16)
-            .foregroundStyle(d.muted)
-            .frame(width: 32, height: 32)
-            .background(d.raised, in: Circle())
-            .contentShape(Circle())
     }
 
     private var customizeEntries: [MenuEntry] {
@@ -403,29 +421,34 @@ private struct DrawerView: View {
 
     private var emptyColumn: some View {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .strokeBorder(d.line, style: StrokeStyle(lineWidth: 1.5, dash: [5, 5]))
+            .strokeBorder(d.hairStrong, style: StrokeStyle(lineWidth: 1.5, dash: [5, 5]))
             .frame(height: 120)
-            .overlay(Text("Drag a card here").font(FN.font(12)).foregroundStyle(d.faint))
+            .overlay(Text("Drag a card here").font(FN.font(12)).foregroundStyle(d.muted))
             .opacity(dragging == nil ? 0 : 1)
     }
 
     private func card(_ app: MiniApp, column: Int) -> some View {
         let lifted = dragging == app
+        let slot = RoundedRectangle(cornerRadius: 18, style: .continuous)
         return ZStack {
             // The slot it will land in.
             if lifted {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(d.primary.opacity(0.55), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
-                    .background(d.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                slot.fill(d.accentSubtle)
+                    .overlay(slot.strokeBorder(d.accent, style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
+                    .opacity(0.7)
             }
             miniApp(app)
                 .environment(\.cardDrag, CardDrag(
                     lifted: lifted,
                     changed: { dragChanged(app, $0) },
                     ended: { dragEnded() }))
+                // Picked up, the card needs a body of its own: see-through,
+                // it showed the slot and the cards it passed over.
+                .background { if lifted { slot.fill(d.materialSolid) } }
                 .offset(lifted ? liftOffset(app) : .zero)
                 .scaleEffect(lifted ? 1.025 : 1)
-                .shadow(color: .black.opacity(lifted ? 0.35 : 0), radius: lifted ? 18 : 0, y: lifted ? 10 : 0)
+                .shadow(color: lifted ? d.lift : .clear, radius: lifted ? 20 : 0, y: lifted ? 18 : 0)
+                .shadow(color: .black.opacity(lifted ? 0.1 : 0), radius: lifted ? 5 : 0, y: lifted ? 3 : 0)
                 .animation(Motion.quick, value: lifted)
         }
         // Measured outside the offset: this is the slot, not the lifted card.
@@ -548,6 +571,22 @@ private struct DrawerView: View {
     }
 }
 
+/// The customize menu's button, drawn like the header's other round buttons.
+private struct HeaderMenuLabel: View {
+    @Environment(\.dock) private var d
+    @State private var hovering = false
+    let icon: String
+
+    var body: some View {
+        Icon(icon, size: 15)
+            .foregroundStyle(hovering ? d.text : d.secondary)
+            .frame(width: 30, height: 30)
+            .background(hovering ? d.hair : d.fill, in: Circle())
+            .contentShape(Circle())
+            .onHover { hovering = $0 }
+    }
+}
+
 // MARK: - Two columns in one container
 
 private struct ColumnKey: LayoutValueKey {
@@ -563,7 +602,7 @@ private struct TwoColumns: Layout {
     private func columnWidth(_ width: CGFloat) -> CGFloat { max(0, (width - spacing) / 2) }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 692
+        let width = proposal.width ?? 708
         let heights = stack(subviews, width: columnWidth(width)).heights
         return CGSize(width: width, height: heights.max() ?? 0)
     }

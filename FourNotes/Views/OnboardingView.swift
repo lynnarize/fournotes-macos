@@ -1175,9 +1175,9 @@ private struct EdgeDockDemo: View {
                 .position(x: 150, y: size.height / 2 + 8)
 
             let shape = EdgeTabShape(geometry)
-            shape.fill(style.surface)
+            shape.fill(style.materialSolid)
                 .shadow(color: .black.opacity(open ? 0.3 : 0.18), radius: open ? 16 : 4, y: open ? 6 : 1)
-            shape.stroke(s.dark ? Color.white.opacity(0.1) : style.line, lineWidth: 1)
+            shape.stroke(style.hair, lineWidth: 1)
 
             ZStack(alignment: .topLeading) {
                 handleFace
@@ -1246,10 +1246,10 @@ private struct EdgeDockDemo: View {
     private var handleFace: some View {
         VStack(spacing: 4) {
             ZStack {
-                Circle().stroke(style.raised, lineWidth: 1.8)
-                Circle().trim(from: 0, to: 0.6).stroke(style.teal, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                Circle().stroke(style.track, lineWidth: 1.8)
+                Circle().trim(from: 0, to: 0.6).stroke(style.accent, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                Text("2").font(.system(size: 6.5, weight: .bold)).foregroundStyle(style.text)
+                Text("2").font(.system(size: 6.5, weight: .medium)).foregroundStyle(style.text)
             }
             .frame(width: 12, height: 12)
         }
@@ -1257,13 +1257,13 @@ private struct EdgeDockDemo: View {
 
     private var drawer: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("Wednesday").font(FN.serif(12)).foregroundStyle(style.text)
+            Text("Wednesday").font(FN.font(11, .medium)).foregroundStyle(style.text)
                 .padding(.leading, 2)
 
             miniCard("Quick note") {
                 HStack(spacing: 0) {
                     Text(String(note.prefix(typed)))
-                    Rectangle().fill(style.primary).frame(width: 1, height: 10)
+                    Rectangle().fill(style.accent).frame(width: 1, height: 10)
                         .opacity(open && typed < note.count ? 1 : 0)
                     Spacer(minLength: 0)
                 }
@@ -1271,17 +1271,17 @@ private struct EdgeDockDemo: View {
                 .foregroundStyle(style.text)
                 .padding(.horizontal, 6)
                 .frame(height: 20)
-                .background(style.field, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .background(style.fill, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(style.hair, lineWidth: 0.5))
             }
 
             miniCard("Today") {
                 HStack(spacing: 6) {
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(ticked ? style.muted.opacity(0.35) : .clear)
-                        .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .stroke(ticked ? .clear : style.faint, lineWidth: 1))
-                        .overlay(Image(systemName: "checkmark").font(.system(size: 6.5, weight: .bold))
-                            .foregroundStyle(style.text).opacity(ticked ? 1 : 0))
+                    Circle()
+                        .fill(ticked ? style.accent : .clear)
+                        .overlay(Circle().strokeBorder(ticked ? .clear : style.hairStrong, lineWidth: 1))
+                        .overlay(Image(systemName: "checkmark").font(.system(size: 5.5, weight: .bold))
+                            .foregroundStyle(style.onAccent).opacity(ticked ? 1 : 0))
                         .frame(width: 10, height: 10)
                     Text("Pay the electricity bill")
                         .font(.system(size: 9.5))
@@ -1292,11 +1292,13 @@ private struct EdgeDockDemo: View {
 
             miniCard("Transcribe") {
                 HStack(spacing: 7) {
-                    Circle().fill(listening ? style.rose : style.primary)
+                    Circle().fill(listening ? style.danger : style.card)
+                        .overlay(Circle().strokeBorder(listening ? .clear : style.hair, lineWidth: 0.5))
                         .frame(width: 16, height: 16)
-                        .overlay(Image(systemName: listening ? "stop.fill" : "mic.fill")
-                            .font(.system(size: 6.5)).foregroundStyle(.white))
-                    LevelBars(active: listening, tint: style.primary, idle: style.faint)
+                        .overlay(RoundedRectangle(cornerRadius: listening ? 1.5 : 3, style: .continuous)
+                            .fill(listening ? .white : style.danger)
+                            .frame(width: listening ? 5 : 6, height: listening ? 5 : 6))
+                    LevelBars(active: listening, tint: style.danger, idle: style.hairStrong)
                         .frame(height: 16)
                 }
             }
@@ -1306,13 +1308,13 @@ private struct EdgeDockDemo: View {
 
     private func miniCard<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(FN.serif(10.5)).foregroundStyle(style.text)
+            Text(title).font(FN.font(9.5, .medium)).foregroundStyle(style.text)
             content()
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(style.card, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(style.cardEdge, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(style.hair, lineWidth: 1))
     }
 
     // MARK: The loop

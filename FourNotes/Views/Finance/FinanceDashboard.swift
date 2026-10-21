@@ -536,18 +536,7 @@ struct FinanceDashboard: View {
     }
 
     private func trackSubscription(_ s: Subscription) {
-        guard let day = DateKit.date(s.nextDate),
-              let at9 = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: day) else { return }
-        let due = DateKit.iso(at9)
-        store.addTodo {
-            $0.title = "Pay \(s.merchant)"
-            $0.dueAt = due
-            $0.remindAt = due
-            // Anchored to its day, so a bill on the 31st comes back on the
-            // 31st (or the month's last day), not the 28th forever after February.
-            $0.rrule = Recurrence.normalised("FREQ=MONTHLY;INTERVAL=1", anchoredTo: at9) ?? "FREQ=MONTHLY;INTERVAL=1"
-            $0.bill = Bill(amount: s.amount, currency: s.currency, category: s.category)
-        }
+        guard store.trackSubscription(s) else { return }
         toasts.push("🔁 Monthly bill added: \(s.merchant)")
     }
 

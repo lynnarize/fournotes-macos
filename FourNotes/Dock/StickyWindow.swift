@@ -265,15 +265,18 @@ final class StickyPanel: NSPanel {
 
     // MARK: Dragged by the strip
 
-    /// The strip along the paper's top, less its minimize button, in the
-    /// window's top-left coordinates.
+    /// The strip along the paper's top, in the window's top-left
+    /// coordinates: between the colour dots on its left and the unstick and
+    /// minimize buttons on its right, which are clicked, not dragged.
     var strip: CGRect? {
         guard state.shown, !state.closing else { return nil }
         let center = state.paperCenter
         let paper = CGRect(x: center.x - StickyGeometry.paperWidth / 2,
                            y: center.y - StickyGeometry.paperHeight / 2,
                            width: StickyGeometry.paperWidth, height: StickyGeometry.paperHeight)
-        return CGRect(x: paper.minX, y: paper.minY, width: paper.width - 38, height: StickyGeometry.stripHeight)
+        let dots: CGFloat = 112, buttons: CGFloat = 68
+        return CGRect(x: paper.minX + dots, y: paper.minY, width: paper.width - dots - buttons,
+                      height: StickyGeometry.stripHeight)
     }
 
     /// Where the pointer and the window were when a drag by the strip began,

@@ -20,4 +20,19 @@ struct IconTests {
                                 in: CGRect(x: 0, y: 0, width: 24, height: 24))
         #expect(dots.boundingRect.height > 1.4, "the dot should be drawn, not collapse to a point")
     }
+
+    @Test("the mark's stroke and spark parse to the end, where the artwork has them")
+    func mark() {
+        #expect(SVGPath.isComplete(Logo.strokePath), "the pen stroke stops part-way through its path")
+        #expect(SVGPath.isComplete(Logo.sparkPath), "the spark stops part-way through its path")
+        let box = CGRect(x: 0, y: 0, width: Logo.viewBox, height: Logo.viewBox)
+        let stroke = SVGPath.path(from: Logo.strokePath, in: box, viewBox: box.size).boundingRect
+        let spark = SVGPath.path(from: Logo.sparkPath, in: box, viewBox: box.size).boundingRect
+        // The traced mark spans x 23…776, y 217…583 of its 800 box.
+        let mark = stroke.union(spark)
+        #expect(abs(mark.minX - 23) <= 2 && abs(mark.maxX - 776) <= 2)
+        #expect(abs(mark.minY - 217) <= 2 && abs(mark.maxY - 583) <= 2)
+        // The spark is up at the stroke's right end, clear of it.
+        #expect(spark.minX > stroke.midX && spark.maxY < stroke.midY + 20)
+    }
 }

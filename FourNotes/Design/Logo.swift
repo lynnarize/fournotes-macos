@@ -1,38 +1,84 @@
 import SwiftUI
 
-// Four Notes logo: red "4" over a black "N" with a red dot.
-// Vector trace of the brand artwork; the "N" uses the ink token so it stays
-// visible in dark mode. Same geometry as src/components/Logo.tsx.
+// Four Notes mark: one pen stroke and a four-point spark, traced from the
+// brand artwork on an 800×800 box (the mark itself spans x 23…776, y 217…583).
+// The stroke uses the ink token so it stays visible in dark mode. Same paths
+// as the web app's mark and the app icon.
 
 struct Logo: View {
     @Environment(\.palette) private var p
     var size: CGFloat = 32
 
-    private static let viewBox = CGRect(x: 113, y: 140, width: 1000, height: 1000)
+    static let viewBox: CGFloat = 800
 
-    private static let nPath =
-        "M535,375 L625,375 L985,898 L988,378 L1073,378 L1075,1012 L950,1012 L601,493 L601,1012 L535,1012 Z"
-    private static let fourPath =
-        "M460 375H535V795H631V867H535V1012H450V870H145V795Z M452 500L450 795H232Z"
+    static let strokePath = """
+        M261 218C265 217 269 217 272 218C275 218 278 219 281 220C284 221 286 222 289 224\
+        C292 225 294 228 296 230C298 232 301 236 302 238C304 240 304 242 305 245C306 248 307 252 308 256\
+        C309 260 309 264 309 268C310 272 309 275 309 279C309 283 309 284 308 291C307 298 305 310 302 321\
+        C300 332 297 340 292 357C288 374 277 407 273 420C269 433 270 432 269 436C268 440 267 443 267 446\
+        C266 449 266 453 266 455C266 457 266 458 267 459C267 460 268 461 269 461C270 461 270 461 271 461\
+        C272 461 271 462 274 460C277 458 276 461 289 451C302 442 339 415 352 406C365 397 360 400 366 397\
+        C372 394 380 389 385 387C390 384 392 384 395 383C398 381 403 380 406 380C409 379 410 379 413 379\
+        C416 378 422 378 425 378C428 379 430 379 433 380C436 380 437 380 441 382C445 383 448 384 456 389\
+        C464 394 480 406 489 411C498 417 502 419 508 421C514 424 520 426 525 427C530 428 535 429 539 429\
+        C543 430 544 430 548 429C552 429 559 428 564 427C569 427 571 426 576 424C581 423 588 420 593 417\
+        C598 415 604 411 608 408C612 405 616 402 620 399C624 396 627 394 631 390C635 386 640 382 644 376\
+        C649 370 655 361 658 357C661 353 660 355 662 354C664 353 666 352 667 352C668 351 670 351 671 351\
+        C672 350 674 350 676 351C678 351 681 352 683 353C685 354 687 355 688 356C689 357 690 358 691 360\
+        C692 362 693 364 694 366C694 368 694 370 694 372C694 374 695 374 693 377C692 380 689 386 686 391\
+        C682 396 678 401 674 406C670 411 665 416 661 421C656 426 652 429 647 433C642 438 637 442 632 445\
+        C627 449 621 452 616 455C611 458 606 461 600 463C594 466 587 469 581 470C575 472 570 473 564 474\
+        C558 475 553 476 548 476C543 476 538 476 533 475C528 475 524 474 520 473C516 473 517 473 512 472\
+        C507 470 498 467 491 464C484 462 483 461 473 455C463 449 441 434 433 429C425 424 427 426 424 426\
+        C421 425 416 426 414 426C412 426 411 426 409 427C407 428 406 428 402 430C398 432 391 435 386 439\
+        C381 442 380 442 370 450C360 458 333 478 323 486C313 493 314 492 310 494C306 497 301 500 296 502\
+        C291 505 285 507 281 509C277 511 274 511 270 512C266 513 262 513 258 514C254 514 252 513 249 513\
+        C246 512 244 511 241 510C239 509 236 507 234 505C232 504 229 501 228 499C226 497 225 496 224 493\
+        C222 490 221 487 220 484C219 481 218 479 218 476C217 473 217 472 217 468C216 464 216 460 216 455\
+        C216 450 217 443 218 436C219 429 218 430 223 412C228 394 243 348 248 329C254 310 255 304 256 297\
+        C258 290 258 290 258 287C259 284 259 279 259 277C259 275 259 275 258 274C258 273 258 273 257 272\
+        C256 272 255 272 254 273C253 273 252 273 248 276C244 279 238 283 231 290C224 296 215 306 207 315\
+        C199 324 189 337 183 345C176 353 174 357 169 365C164 373 159 380 152 392C145 404 134 423 127 436\
+        C120 449 116 457 110 469C105 481 99 496 94 508C89 520 84 532 81 542C78 552 75 562 73 567\
+        C71 572 71 570 70 572C69 574 68 575 67 576C66 577 66 577 64 578C62 579 58 581 56 582\
+        C54 583 52 583 49 583C46 583 42 582 40 581C38 581 38 580 36 579C34 578 32 576 31 575\
+        C29 574 29 572 28 571C27 570 26 568 26 567C25 566 25 565 25 563C24 561 24 559 24 556\
+        C24 553 23 556 26 547C29 538 35 520 41 505C47 490 53 475 61 458C68 441 79 419 87 405\
+        C94 391 99 383 106 372C112 361 118 352 125 341C133 330 142 318 149 309C155 300 160 295 167 286\
+        C174 278 184 268 191 261C198 254 204 249 210 244C216 239 226 233 230 230C234 227 232 228 235 227\
+        C238 225 245 222 249 221C253 219 257 219 261 218Z
+        """
+
+    static let sparkPath = """
+        M716 234C716 234 717 234 718 234C719 235 719 233 720 236C722 239 724 247 725 250\
+        C726 253 726 253 727 256C729 259 732 264 735 267C737 270 739 272 741 274C743 276 747 279 749 281\
+        C751 283 752 283 755 285C758 286 761 288 764 289C767 290 772 291 774 292C776 293 776 293 776 294\
+        C776 295 776 295 776 296C776 297 776 298 776 298C776 299 776 300 774 301C772 302 766 303 763 304\
+        C760 305 758 306 755 308C752 310 748 313 745 315C742 317 741 318 739 320C737 322 735 325 733 328\
+        C731 331 729 334 727 337C726 340 724 344 723 347C722 350 722 354 721 356C720 359 718 359 717 359\
+        C716 359 716 359 715 359C714 358 713 359 713 357C712 355 711 351 710 347C709 343 706 338 705 335\
+        C703 332 702 331 700 328C698 325 694 321 691 318C689 315 687 314 684 312C681 310 678 308 675 306\
+        C672 305 671 304 668 303C665 302 661 302 659 301C657 300 657 300 657 299C656 298 656 297 656 296\
+        C656 295 656 294 657 293C657 292 656 293 658 292C660 291 665 290 668 289C671 287 675 286 678 284\
+        C681 283 683 281 686 279C688 277 692 274 694 271C696 269 698 267 700 265C701 263 703 260 705 257\
+        C706 254 707 253 708 250C709 247 711 239 712 237C713 235 712 236 713 236\
+        C714 235 715 234 716 234Z
+        """
+
+    /// Parsed once, in the 800 box: every Logo on screen redraws on hover.
+    private static let stroke = SVGPath.path(from: strokePath, in: box, viewBox: box.size)
+    private static let spark = SVGPath.path(from: sparkPath, in: box, viewBox: box.size)
+    private static let box = CGRect(x: 0, y: 0, width: viewBox, height: viewBox)
 
     var body: some View {
         Canvas { context, canvasSize in
-            let scale = min(canvasSize.width, canvasSize.height) / Logo.viewBox.width
-            let transform = CGAffineTransform(translationX: -Logo.viewBox.minX, y: -Logo.viewBox.minY)
-                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
-
-            let box = CGRect(origin: .zero, size: CGSize(width: Logo.viewBox.width, height: Logo.viewBox.height))
-            var n = SVGPath.path(from: Logo.nPath, in: box, viewBox: box.size)
-            n = n.applying(transform)
-            context.fill(n, with: .color(p.logoInk))
-
-            var four = SVGPath.path(from: Logo.fourPath, in: box, viewBox: box.size)
-            four = four.applying(transform)
-            context.fill(four, with: .color(p.logoRed), style: FillStyle(eoFill: true))
-
-            // The dot on the "N".
-            let dot = Path(ellipseIn: CGRect(x: 1031 - 50, y: 318 - 50, width: 100, height: 100).applying(transform))
-            context.fill(dot, with: .color(p.logoRed))
+            let side = min(canvasSize.width, canvasSize.height)
+            let scale = side / Logo.viewBox
+            let transform = CGAffineTransform(scaleX: scale, y: scale)
+                .concatenating(CGAffineTransform(translationX: (canvasSize.width - side) / 2,
+                                                 y: (canvasSize.height - side) / 2))
+            context.fill(Logo.stroke.applying(transform), with: .color(p.logoInk))
+            context.fill(Logo.spark.applying(transform), with: .color(p.logoRed))
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)

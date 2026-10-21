@@ -246,6 +246,9 @@ final class AIEngine: ObservableObject {
     /// True when chat is answered on this Mac rather than in the cloud.
     var chatRunsOnDevice: Bool { answerers.first?.isLocal == true }
 
+    /// Who answers chat first: "Apple Intelligence", "Claude", "LM Studio"…
+    var chatAnswererName: String? { answerers.first?.shortName }
+
     /// The cloud model a local answer can be handed to, when there is one.
     var cloudOffer: String? {
         // Only while online: the whole point is what the internet knows.
