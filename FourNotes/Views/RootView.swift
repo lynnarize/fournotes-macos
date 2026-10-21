@@ -8,6 +8,7 @@ struct RootView: View {
     @EnvironmentObject private var store: Store
     @EnvironmentObject private var nav: Navigation
     @EnvironmentObject private var assistant: Assistant
+    @ObservedObject private var updates = UpdateCheck.shared
 
     var body: some View {
         HStack(spacing: 0) {
@@ -46,6 +47,7 @@ struct RootView: View {
                                set: { nav.sheet = $0 })) { sheet in
             switch sheet {
             case .settings: SettingsView()
+            case .update: UpdateSheet()
             case .onboarding: EmptyView()
             case .palette: EmptyView()
             }
@@ -57,13 +59,25 @@ struct RootView: View {
         .task {
             // A brand new install starts on the setup wizard.
             if store.needsOnboarding, nav.sheet == nil { nav.present(.onboarding) }
+            // A release found on an earlier day is offered again a little after launch.
+            try? await Task.sleep(for: .seconds(4))
+            offerUpdate()
         }
+        // …and one the daily check finds while the app is open.
+        .onChange(of: updates.available?.version) { _, _ in offerUpdate() }
         .onChange(of: nav.tab) { _, tab in
             nav.clearPulse(tab)
             // Focus mode belongs to the note editor; any other tab brings the
             // app back.
             if tab != .notes { nav.focusMode = false }
         }
+    }
+
+    /// The update pop-up, once a launch, never over another sheet or the first-run setup.
+    private func offerUpdate() {
+        guard updates.shouldPrompt, nav.sheet == nil, !store.needsOnboarding else { return }
+        updates.didPrompt()
+        nav.present(.update)
     }
 
     /// Search and quick add, over a dimmed window. A sheet on macOS ignores

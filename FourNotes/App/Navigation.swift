@@ -15,7 +15,7 @@ final class Navigation: ObservableObject {
     /// which. Three independent booleans meant ⌘, over an open palette silently
     /// did nothing and could not be reopened.
     enum Sheet: String, Identifiable, Equatable {
-        case settings, palette, onboarding
+        case settings, palette, onboarding, update
         var id: String { rawValue }
     }
 
