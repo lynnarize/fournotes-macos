@@ -132,6 +132,19 @@ struct AppCommands: Commands {
             .keyboardShortcut("r", modifiers: [.command, .shift])
         }
 
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                // A release already found opens its pop-up; otherwise Settings → About
+                // asks GitHub and says what it found.
+                if UpdateCheck.shared.available != nil {
+                    nav.present(.update)
+                } else {
+                    nav.openSettings(section: "about")
+                    UpdateCheck.shared.check()
+                }
+            }
+        }
+
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") { nav.present(.settings) }
                 .keyboardShortcut(",", modifiers: .command)

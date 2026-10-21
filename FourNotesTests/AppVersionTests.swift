@@ -25,3 +25,33 @@ struct AppVersionTests {
         #expect(!AppVersion.isNewer([0, 1, 0], than: [0, 1, 1]))
     }
 }
+
+// GitHub's generated notes, as the update pop-up shows them.
+
+@Suite("Release notes")
+struct ReleaseNotesTests {
+
+    @Test("keeps what changed, drops the rest")
+    func generated() {
+        let body = """
+        ## What's Changed\r
+        * New mark and light/dark app icon, Edge Dock restyle by @lynnarize in https://github.com/lynnarize/fournotes-macos/pull/1\r
+        * Main window redesign by @lynnarize in https://github.com/lynnarize/fournotes-macos/pull/2\r
+        \r
+        ## New Contributors\r
+        * @lynnarize made their first contribution in https://github.com/lynnarize/fournotes-macos/pull/1\r
+        \r
+        **Full Changelog**: https://github.com/lynnarize/fournotes-macos/compare/v0.1.5...v0.2.0-beta
+        """
+        #expect(ReleaseNotes.tidy(body) == """
+        • New mark and light/dark app icon, Edge Dock restyle
+        • Main window redesign
+        """)
+    }
+
+    @Test("written notes pass through")
+    func written() {
+        #expect(ReleaseNotes.tidy("Faster sync.\n\n\n- Fixed a crash") == "Faster sync.\n\n• Fixed a crash")
+        #expect(ReleaseNotes.tidy("") == "")
+    }
+}

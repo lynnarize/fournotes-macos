@@ -415,10 +415,11 @@ struct SettingsView: View {
         HStack(spacing: 8) {
             Circle().fill(p.danger).frame(width: 7, height: 7)
             Text("Version \(version) is available.").font(FN.small).foregroundStyle(p.text)
-            Button("Download") { NSWorkspace.shared.open(page) }
+            Button("Install…") { nav.present(.update) }
                 .buttonStyle(.fn)
-                .font(FN.small)
-                .foregroundStyle(p.accent)
+                .font(FN.font(12, .medium))
+                .foregroundStyle(p.foreground)
+                .underline()
         }
     }
 
