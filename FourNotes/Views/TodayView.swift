@@ -1,9 +1,11 @@
 import Combine
 import SwiftUI
 
-// Daily brief: today's tasks, yesterday's spending, quick notes, heads-up
-// alerts (budgets, subscriptions, money owed) and a 3-line AI summary.
-// Ported from src/components/TodayView.tsx.
+// Today, as on the web (src/components/TodayView.tsx): the date and a greeting, the
+// brief (one short paragraph written from your data, or the written brief point by
+// point, see Settings → Today), and the assistant under it. Beside them, at a glance:
+// what's due (tick it off right here), what you've spent today, and quick notes.
+// Sending to the assistant opens the conversation as a card where the brief was.
 
 struct TodayView: View {
     @Environment(\.palette) private var p
@@ -11,18 +13,12 @@ struct TodayView: View {
     @EnvironmentObject private var nav: Navigation
     @EnvironmentObject private var toasts: ToastCenter
     @EnvironmentObject private var engine: AIEngine
-    @ObservedObject private var stickies = EdgeStickies.shared
-    @Environment(\.colorScheme) private var scheme
-    @AppStorage("fournotes.theme") private var themeRaw = ThemeChoice.system.rawValue
     /// One short paragraph, or point by point. Set in Settings → Today.
     @AppStorage(BriefStyle.storageKey) private var briefStyleRaw = BriefStyle.paragraph.rawValue
 
     @State private var loading = false
-    @State private var draft = ""
-    /// The window is too narrow for the greeting and the notes side by side.
+    /// The window is too narrow for the page and the cards side by side.
     @State private var narrow = false
-    /// A short window: smaller type, fewer lines, so the page still fits.
-    @State private var compact = false
     /// Why the brief couldn't be written, after Refresh was pressed.
     @State private var briefError: String?
     @State private var now = Date()
@@ -41,6 +37,16 @@ struct TodayView: View {
     // MARK: - Derived data
 
     private var tasks: [Todo] { Glance.dueByToday(store.liveTodos) }
+
+    /// The next week's tasks, after today.
+    private var upcoming: [Todo] {
+        let start = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: Date()) ?? Date()
+        let end = start.addingTimeInterval(7 * 86_400)
+        return Array(store.liveTodos
+            .filter { !$0.done && (DateKit.date($0.dueAt).map { $0 > start && $0 <= end } ?? false) }
+            .sorted { ($0.dueAt ?? "") < ($1.dueAt ?? "") }
+            .prefix(2))
+    }
 
     private var focus: [Todo] {
         guard tasks.isEmpty else { return [] }
@@ -97,29 +103,28 @@ struct TodayView: View {
         // Computed once per render and handed down: each of these walks the
         // whole transaction list, and `alerts` walks it three times.
         let alerts = alerts
-        VStack(spacing: 0) {
-            Spacer(minLength: 12)
-            // Side by side when there's room; in a narrow window the notes
-            // go under the greeting rather than squeezing it until
-            // "afternoon" breaks in the middle.
-            let layout = narrow ? AnyLayout(VStackLayout(alignment: .leading, spacing: 20))
-                                : AnyLayout(HStackLayout(alignment: .center, spacing: 56))
+        ScrollView {
+            let layout = narrow ? AnyLayout(VStackLayout(alignment: .leading, spacing: 32))
+                                : AnyLayout(HStackLayout(alignment: .top, spacing: 40))
             layout {
-                greetingBlock(alerts)
+                mainColumn(alerts)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                quickNotesStack
-                    .frame(width: 340)
+                VStack(spacing: 16) {
+                    DueTodayCard(tasks: tasks, upcoming: upcoming, focus: focus)
+                    SpentTodayCard(yesterdayTotal: yesterdayTotal)
+                    QuickNotesCard(quickNotes: quickNotes)
+                }
+                .frame(width: narrow ? nil : 340)
+                .frame(maxWidth: narrow ? .infinity : nil)
             }
-            .frame(maxWidth: 1060)
-            Spacer(minLength: 20)
-            // The assistant, in the middle of the page. Drawn last, so the
-            // conversation it opens sits over everything above it.
-            ChatDock(minimized: false, hero: true)
-                .padding(.bottom, compact ? 14 : 28)
+            .frame(maxWidth: 1180)
+            .padding(.horizontal, 36)
+            .padding(.top, nav.todayChat ? 32 : 64)
+            .padding(.bottom, 48)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onGeometryChange(for: Bool.self, of: { $0.size.width < 820 }) { narrow = $0 }
-        .onGeometryChange(for: Bool.self, of: { $0.size.height < 700 }) { compact = $0 }
+        .scrollBounceBehavior(.basedOnSize)
+        .onGeometryChange(for: Bool.self, of: { $0.size.width < 920 }) { narrow = $0 }
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
@@ -146,82 +151,96 @@ struct TodayView: View {
             .filter { !$0.isEmpty }
     }
 
-    private func serif(_ text: String) -> some View {
-        Text(text)
-            .font(FN.serif(compact ? 36 : 46))
-            .minimumScaleFactor(0.75)
-            .tracking(-0.8)
-            .foregroundStyle(p.text)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    /// The greeting, then one list: the written brief, what's due (tick it
-    /// off right here), and anything that needs a look — what used to be
-    /// four separate sections.
-    private func greetingBlock(_ alerts: [String]) -> some View {
-        let rows = tasks + focus
-        return VStack(alignment: .leading, spacing: 0) {
-            serif("Hello\(firstName.map { " \($0)" } ?? "")!")
-            serif("\(Fmt.greeting(now)).")
-
-            if briefStyle == .paragraph {
-                paragraph(alerts)
-                    .frame(maxWidth: 580, alignment: .leading)
-                    .padding(.top, 22)
-                    .transition(.opacity)
-            } else {
-                pointByPoint(alerts, rows: rows)
-                    .transition(.opacity)
+    /// The date, the greeting, the brief (until a conversation takes its place), and
+    /// the assistant.
+    private func mainColumn(_ alerts: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(Self.dateLine(now))
+                    .font(FN.font(14))
+                    .foregroundStyle(p.textSecondary)
+                Text("\(Fmt.greeting(now))\(firstName.map { ", \($0)" } ?? "")")
+                    .font(FN.display(52))
+                    .tracking(FN.displayTracking(52))
+                    .foregroundStyle(p.foreground)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
             }
 
-            HStack(spacing: 16) {
-                if briefStyle == .points {
-                    Button { Task { await writeBrief(asked: true) } } label: {
-                        HStack(spacing: 6) {
-                            Icon("sparkle", size: 14)
-                            Text(loading ? "Writing…" : (brief != nil ? "Refresh brief" : "Write today's brief"))
-                        }
-                        .contentShape(Rectangle())
+            if !nav.todayChat {
+                VStack(alignment: .leading, spacing: 14) {
+                    if isEmptyApp {
+                        emptyPrompt
+                    } else if briefStyle == .paragraph {
+                        paragraph(alerts)
+                    } else {
+                        pointByPoint(alerts)
                     }
-                    .buttonStyle(.fn)
-                    .disabled(loading)
-                    .opacity(loading ? 0.4 : 1)
-                    .motion(loading, Motion.quick)
-                }
-
-                Button { nav.tab = .finance } label: {
-                    HStack(spacing: 6) {
-                        Icon("wallet", size: 14)
-                        Text(yesterdayTotal > 0 ? "\(Money.format(yesterdayTotal, currency, compact: true)) yesterday"
-                             : "Finance")
+                    if !isEmptyApp { briefControls }
+                    if let briefError, briefStyle == .points {
+                        Text(briefError)
+                            .font(FN.font(13))
+                            .foregroundStyle(p.textSecondary)
+                            .transition(.opacity)
                     }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.fn)
+                .frame(maxWidth: 600, alignment: .leading)
+                .transition(.opacity.combined(with: .offset(y: -6)))
             }
-            .font(FN.body)
-            .foregroundStyle(p.faint)
-            .padding(.top, compact ? 10 : 18)
 
-            if let briefError, briefStyle == .points {
-                Text(briefError)
-                    .font(FN.small)
-                    .foregroundStyle(p.muted)
-                    .padding(.top, 6)
-                    .transition(.opacity)
-            }
+            ChatDock(minimized: false, hero: true)
+                .padding(.top, nav.todayChat ? 0 : 12)
         }
     }
 
-    /// The written brief, what's due and anything that needs a look, a row each.
-    private func pointByPoint(_ alerts: [String], rows: [Todo]) -> some View {
+    /// "Wednesday, October 21".
+    private static func dateLine(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US")
+        f.dateFormat = "EEEE, MMMM d"
+        return f.string(from: date)
+    }
+
+    private var emptyPrompt: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Nothing here yet. Tell the assistant what you need: a note, a task, or something you spent. Or look around with some sample data first.")
+                .font(FN.font(18))
+                .lineSpacing(7)
+                .foregroundStyle(p.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            SecondaryButton(title: "Explore with sample data") { store.loadSamples() }
+        }
+    }
+
+    /// Refresh (point by point), and how the brief reads.
+    private var briefControls: some View {
+        HStack(spacing: 4) {
+            if briefStyle == .points {
+                QuietButton(icon: "refresh", title: loading ? "Writing…" : (brief != nil ? "Refresh brief" : "Write today's brief")) {
+                    Task { await writeBrief(asked: true) }
+                }
+                .disabled(loading)
+            }
+            MenuButton(help: "How the brief reads") {
+                BriefStyle.allCases.map { style in
+                    .item(style.label, checked: style == briefStyle) {
+                        withAnimation(Motion.standard) { briefStyleRaw = style.rawValue }
+                    }
+                }
+            } label: {
+                QuietLabel(title: briefStyle.label, trailingIcon: "chevronDown")
+            }
+        }
+        .padding(.leading, -10)
+    }
+
+    /// The written brief, and anything that needs a look, a row each.
+    private func pointByPoint(_ alerts: [String]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if briefLines.isEmpty {
-                briefRow(glyph: "✳︎", text: loading ? "Reading your day…"
-                         : isEmptyApp ? "Nothing here yet. Tell the assistant below what you need."
-                         : "Your daily brief will appear here.")
-                if brief == nil, !yesterdaySpend.isEmpty {
-                    briefRow(glyph: "💸", text: "\(Money.format(yesterdayTotal, currency)) spent yesterday")
+                briefRow(icon: "calendarCheck", text: loading ? "Reading your day…" : "Your daily brief will appear here.")
+                if !yesterdaySpend.isEmpty {
+                    briefRow(icon: "wallet", text: "\(Money.format(yesterdayTotal, currency)) spent yesterday")
                 }
             } else {
                 ForEach(Array(briefLines.prefix(3).enumerated()), id: \.offset) { _, line in
@@ -229,33 +248,15 @@ struct TodayView: View {
                     briefRow(glyph: split.glyph, text: split.text)
                 }
             }
-
-            ForEach(rows.prefix(compact ? 2 : 3)) { todo in
-                taskRow(todo)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
-            let shownRows = compact ? 2 : 3
-            if rows.count > shownRows {
-                moreLink("\(rows.count - shownRows) more due", go: { nav.tab = .todo })
-            }
-
             // Only what the written brief didn't already say.
-            ForEach(freshAlerts(alerts).prefix(compact ? 1 : 2), id: \.self) { alert in
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Icon("warning", size: 15).foregroundStyle(p.boardAmber).frame(width: 22)
-                    Text(alert)
-                        .foregroundStyle(p.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .transition(.opacity.combined(with: .offset(y: 5)))
+            ForEach(freshAlerts(alerts).prefix(2), id: \.self) { alert in
+                briefRow(icon: "warning", text: alert, tone: p.warning)
+                    .transition(.opacity.combined(with: .offset(y: 5)))
             }
         }
-        .font(.system(size: 16))
-        .lineSpacing(3)
-        .frame(maxWidth: 580, alignment: .leading)
-        .padding(.top, 22)
+        .font(FN.font(17))
+        .lineSpacing(6)
         .animation(Motion.list, value: briefLines)
-        .animation(Motion.list, value: rows.map(\.id))
         .animation(Motion.list, value: alerts)
     }
 
@@ -266,10 +267,10 @@ struct TodayView: View {
     private func paragraph(_ alerts: [String]) -> some View {
         let pieces = BriefParagraph.compose(paragraphInput(alerts))
         return Text(attributed(pieces))
-            .font(.system(size: compact ? 16 : 17))
-            .lineSpacing(compact ? 4 : 6)
-            .foregroundStyle(p.muted)
-            .tint(p.text)
+            .font(FN.font(18))
+            .lineSpacing(7)
+            .foregroundStyle(p.textSecondary)
+            .tint(p.foreground)
             .fixedSize(horizontal: false, vertical: true)
             .textSelection(.enabled)
             .environment(\.openURL, OpenURLAction { url in
@@ -286,8 +287,8 @@ struct TodayView: View {
             var run = AttributedString(piece.text)
             if let target = piece.target, let url = BriefParagraph.url(target) {
                 run.link = url
-                run.foregroundColor = p.text
-                run.underlineStyle = Text.LineStyle(pattern: .solid, color: p.faint.opacity(0.8))
+                run.foregroundColor = p.foreground
+                run.underlineStyle = Text.LineStyle(pattern: .solid, color: p.borderStrong)
             }
             out += run
         }
@@ -326,21 +327,21 @@ struct TodayView: View {
         }
     }
 
-    private func briefRow(glyph: String, text: String) -> some View {
+    private func briefRow(glyph: String? = nil, icon: String? = nil, text: String, tone: Color? = nil) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(glyph).frame(width: 22)
+            Group {
+                if let icon {
+                    Icon(icon, size: 16).foregroundStyle(tone ?? p.foreground)
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 }
+                } else {
+                    Text(glyph ?? "•")
+                }
+            }
+            .frame(width: 22)
             Text(text)
-                .foregroundStyle(p.muted)
+                .foregroundStyle(p.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    private func moreLink(_ title: String, go: @escaping () -> Void) -> some View {
-        Button(action: go) {
-            Text("\(title) →").font(FN.font(13)).foregroundStyle(p.faint)
-        }
-        .buttonStyle(.fn)
-        .padding(.leading, 34)
     }
 
     /// "☀️ Andi still owes you…" → ("☀️", "Andi still owes you…"), so the
@@ -354,138 +355,7 @@ struct TodayView: View {
         return (String(first), String(line.dropFirst()).trimmingCharacters(in: .whitespaces))
     }
 
-    private func taskRow(_ todo: Todo) -> some View {
-        let overdue = DateKit.date(todo.dueAt).map { $0 < Date() } ?? false
-        return HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Button {
-                let extra = store.toggleTodo(todo.id, done: true)
-                toasts.push((["☑️ \(todo.title)"] + extra).joined(separator: "\n"))
-            } label: {
-                Circle()
-                    .strokeBorder(overdue ? p.danger.opacity(0.8) : p.faint, lineWidth: 1.5)
-                    .frame(width: 15, height: 15)
-                    .frame(width: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.fn)
-            .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
-            .accessibilityLabel("Complete \(todo.title)")
-
-            Button { nav.open(ChangeLink(kind: .todos, id: todo.id)) } label: {
-                HStack(spacing: 8) {
-                    Text(todo.title).foregroundStyle(p.text).lineLimit(1)
-                    if let due = DateKit.date(todo.dueAt) {
-                        Text(Calendar.current.isDateInToday(due) ? Fmt.time(due) : Fmt.dayMonth(due))
-                            .monospacedDigit()
-                            .foregroundStyle(overdue ? p.danger : p.faint)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.fn)
-        }
-        .flashes(nav.isFlashing(todo.id), palette: p)
-    }
-
-    // MARK: - Quick notes
-
-    private var cardFill: Color {
-        if scheme == .dark { return p.panel }
-        return themeRaw == ThemeChoice.paper.rawValue ? .hex(0xFFFCF3) : .white
-    }
-
-    /// Quick notes as a loose stack of paper cards beside the greeting, the
-    /// newest on top, with a blank one to write on.
-    private var quickNotesStack: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Icon("noteAdd", size: 16).foregroundStyle(p.faint)
-                TextField("Quick notes", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 15))
-                    .foregroundStyle(p.text)
-                    .lineLimit(1...5)
-                    .onSubmit(saveQuick)
-                if !draft.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Image(systemName: "return").font(.system(size: 11, weight: .semibold)).foregroundStyle(p.faint)
-                        .transition(.opacity)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .background(cardFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(p.line, style: StrokeStyle(lineWidth: 1, dash: draft.isEmpty ? [4, 4] : [])))
-            .motion(draft.isEmpty, Motion.quick)
-
-            ForEach(Array(quickNotes.prefix(narrow || compact ? 1 : 3).enumerated()), id: \.element.id) { index, note in
-                noteCard(note)
-                    .offset(x: [22, 4, 30][index])
-                    .transition(.opacity.combined(with: .offset(y: -8)))
-            }
-            .animation(Motion.list, value: quickNotes.prefix(3).map(\.id))
-
-            if quickNotes.count > (narrow || compact ? 1 : 3) {
-                moreLink("All notes", go: { nav.tab = .notes })
-                    .padding(.leading, -8)
-            }
-        }
-    }
-
-    private func noteCard(_ note: Note) -> some View {
-        HoverRow(cornerRadius: 14) { hovering in
-            HStack(spacing: 12) {
-                Button { nav.open(ChangeLink(kind: .notes, id: note.id)) } label: {
-                    HStack(spacing: 12) {
-                        Icon("note", size: 14, weight: 1.9)
-                            .foregroundStyle(.white)
-                            .frame(width: 30, height: 30)
-                            .background(p.finA, in: Circle())
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(note.title.isEmpty ? "Untitled" : note.title)
-                                .font(FN.font(14, .semibold)).foregroundStyle(p.text).lineLimit(1)
-                            Text(ago(note.createdAt))
-                                .font(FN.font(12)).foregroundStyle(p.faint)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.fn)
-
-                let stuck = stickies.isStuck(note.id)
-                IconButton("pin", size: 13, box: 24, tone: stuck ? p.accent : nil,
-                           help: stuck ? "Take off the screen edge" : "Stick to the screen edge") {
-                    stickies.toggle(note.id)
-                }
-                .opacity(hovering || stuck ? 1 : 0)
-                .motion(hovering, Motion.quick)
-
-                IconButton("x", size: 13, box: 24, help: "Delete “\(note.title)”") {
-                    store.remove(.notes, note.id)
-                }
-                .opacity(hovering ? 1 : 0)
-                .motion(hovering, Motion.quick)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-        }
-        .background(cardFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(p.line, lineWidth: 1))
-        .shadow(color: p.shadow, radius: 12, y: 5)
-        .frame(width: 310)
-        .flashes(nav.isFlashing(note.id), palette: p)
-    }
-
     // MARK: - Actions
-
-    private func saveQuick() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        store.addNote { QuickNote.apply(text, to: &$0) }
-        draft = ""
-        toasts.push("📝 Quick note saved")
-    }
 
     /// What the brief is written from, as a short fingerprint.
     private var briefBasis: String {
@@ -567,16 +437,6 @@ struct TodayView: View {
         }
     }
 
-    private func ago(_ iso: String) -> String {
-        guard let date = DateKit.date(iso) else { return "" }
-        let mins = Int((Date().timeIntervalSince(date) / 60).rounded())
-        if mins < 1 { return "now" }
-        if mins < 60 { return "\(mins)m" }
-        let h = Int((Double(mins) / 60).rounded())
-        if h < 24 { return "\(h)h" }
-        let d = Int((Double(h) / 24).rounded())
-        return d < 7 ? "\(d)d" : Fmt.dayMonth(date)
-    }
 }
 
 // MARK: - Flash highlight

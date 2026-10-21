@@ -4,23 +4,39 @@ import SwiftUI
 
 // MARK: - Card
 
-/// The rounded box every tab uses (Notes editor, task panel, Today, Finance).
+/// The rounded box every tab uses (Notes editor, task panel, Today, Finance): the kit's
+/// `.card`. Cards rest on a hairline border, never a shadow.
 struct Card<Content: View>: View {
     @Environment(\.palette) private var p
-    var padding: CGFloat = 14
+    var padding: CGFloat = 16
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         content()
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(p.bg)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(p.surface)
+            .clipShape(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(p.line, lineWidth: 1))
-            .shadow(color: p.shadow, radius: 8, y: 2)
+                RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous)
+                    .strokeBorder(p.border, lineWidth: 1))
             .entrance()
+    }
+}
+
+extension View {
+    /// The kit's `.floating`: a card that sits over the page (menus, popovers, the
+    /// composer), with the one shadow the kit allows.
+    func floating(_ p: Palette, radius: CGFloat = FN.radiusPanel) -> some View {
+        // The shadow belongs to the background shape alone: on the whole view it
+        // would fall from every line of text and every card inside.
+        background {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(p.surface)
+                .shadow(color: p.shadowStrong, radius: 24, y: 10)
+                .shadow(color: p.shadow, radius: 5, y: 2)
+        }
+        .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(p.border, lineWidth: 1))
     }
 }
 
@@ -42,22 +58,20 @@ struct CardHead<Trailing: View>: View {
     var body: some View {
         HStack(spacing: 10) {
             if let icon {
-                Icon(icon, size: 18)
-                    .foregroundStyle(p.text)
-                    .frame(width: 40, height: 40)
-                    .background(p.hover, in: Circle())
+                Icon(icon, size: 16)
+                    .foregroundStyle(p.textSecondary)
             }
             Text(title)
-                .font(FN.serif(18))
-                .foregroundStyle(p.text)
+                .font(FN.font(16, .medium))
+                .foregroundStyle(p.foreground)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             trailing()
             if let onOpen {
-                IconButton("arrowUpRight", size: 18, help: openLabel, action: onOpen)
+                HeadLink(title: openLabel ?? "Open", action: onOpen)
             }
         }
-        .frame(minHeight: 40)
+        .frame(minHeight: 32)
     }
 }
 
@@ -69,10 +83,10 @@ struct SectionTitle: View {
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text.uppercased())
-            .font(FN.font(11, .semibold))
-            .tracking(0.6)
-            .foregroundStyle(p.muted)
+        // The kit's group label: small and grey, never uppercase.
+        Text(text)
+            .font(FN.small)
+            .foregroundStyle(p.textMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 6)
     }
@@ -92,13 +106,15 @@ struct EmptyStateView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
         .padding(.horizontal, 24)
+        .background(p.surfaceMuted.opacity(0.5), in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: FN.radius, style: .continuous)
-                .strokeBorder(p.line, style: StrokeStyle(lineWidth: 1, dash: [4, 4])))
+            RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous)
+                .strokeBorder(p.border, style: StrokeStyle(lineWidth: 1, dash: [4, 4])))
     }
 }
 
-/// The small rounded label used for tags, counts and inline metadata.
+/// The small rounded label used for tags, counts and inline metadata: the kit's
+/// `.badge`, neutral, or in a status tone (always with words).
 struct Chip<Content: View>: View {
     @Environment(\.palette) private var p
     var tone: Color?
@@ -107,12 +123,10 @@ struct Chip<Content: View>: View {
     var body: some View {
         HStack(spacing: 4) { content() }
             .font(FN.small)
-            .foregroundStyle(tone ?? p.muted)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background((tone ?? p.muted).opacity(tone == nil ? 0 : 0.12))
-            .background(tone == nil ? p.hover : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .foregroundStyle(tone ?? p.textSecondary)
+            .padding(.horizontal, 8)
+            .frame(minHeight: 20)
+            .background(tone.map { $0.opacity(0.12) } ?? p.surfaceMuted, in: Capsule())
             // One line, truncated when there is no room — the chip used to
             // insist on its full width and spill out of whatever held it.
             .lineLimit(1)
@@ -123,6 +137,77 @@ extension Chip where Content == Text {
     init(_ text: String, tone: Color? = nil) {
         self.tone = tone
         self.content = { Text(text) }
+    }
+}
+
+/// A status label with words (the kit's `.badge-info` and friends): the accent for
+/// "new" or "beta", status colours for status.
+struct Badge: View {
+    @Environment(\.palette) private var p
+    let text: String
+    var tone: Color?
+    var subtle: Color?
+
+    var body: some View {
+        Text(text)
+            .font(FN.font(11, .medium))
+            .foregroundStyle(tone ?? p.accent)
+            .padding(.horizontal, 6)
+            .frame(height: 18)
+            .background(subtle ?? p.accentSubtle, in: Capsule())
+            .fixedSize()
+    }
+}
+
+/// The quiet link at the end of a card's title row: "All tasks", "Finance".
+struct HeadLink: View {
+    @Environment(\.palette) private var p
+    @State private var hovering = false
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(FN.font(13))
+                .foregroundStyle(hovering ? p.foreground : p.textSecondary)
+                .padding(.horizontal, 4)
+                .frame(minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.fn)
+        .onHover { hovering = $0 }
+        .motion(hovering, Motion.quick)
+    }
+}
+
+/// The kit's `.pill`: a suggestion or a filter, round, on a hairline.
+struct PillButton: View {
+    @Environment(\.palette) private var p
+    @State private var hovering = false
+    var icon: String?
+    let title: String
+    var selected = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if let icon { Icon(icon, size: 15) }
+                Text(title).lineLimit(1)
+            }
+            .font(FN.font(13, selected ? .medium : .regular))
+            .foregroundStyle(selected || hovering ? p.foreground : p.textSecondary)
+            .padding(.leading, icon == nil ? 13 : 11)
+            .padding(.trailing, 13)
+            .frame(height: 32)
+            .background(selected ? p.accentSubtle : (hovering ? p.hover : .clear), in: Capsule())
+            .overlay(Capsule().strokeBorder(selected ? p.accent : p.border, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.fn)
+        .onHover { hovering = $0 }
+        .motion(hovering, Motion.quick)
     }
 }
 
@@ -148,13 +233,11 @@ struct IconButton: View {
     var body: some View {
         Button(action: action) {
             Icon(name, size: size)
-                .foregroundStyle(tone ?? (hovering ? p.text : p.muted))
+                .foregroundStyle(tone ?? (hovering ? p.foreground : p.textSecondary))
                 .frame(width: box, height: box)
-                .background(hovering ? p.hover : .clear,
-                            in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
-                .scaleEffect(hovering ? 1.04 : 1)
+                .background(hovering ? p.hover : .clear, in: Circle())
                 .motion(hovering, Motion.quick)
-                .contentShape(Rectangle())
+                .contentShape(Circle())
         }
         .buttonStyle(.fn)
         .onHover { hovering = $0 }
@@ -175,11 +258,10 @@ struct GhostButton<Label: View>: View {
         Button(action: action) {
             label()
                 .font(FN.body)
-                .foregroundStyle(tone ?? (hovering ? p.text : p.muted))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(hovering ? p.hover : .clear,
-                            in: RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous))
+                .foregroundStyle(tone ?? (hovering ? p.foreground : p.textSecondary))
+                .padding(.horizontal, 10)
+                .frame(minHeight: 28)
+                .background(hovering ? p.hover : .clear, in: Capsule())
                 .motion(hovering, Motion.quick)
                 .contentShape(Rectangle())
         }
@@ -205,14 +287,13 @@ struct PrimaryButton: View {
                 Text(title)
             }
             .font(FN.bodyMedium)
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background((tone ?? p.accent).opacity(disabled ? 0.4 : (hovering ? 0.88 : 1)),
-                        in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
+            .foregroundStyle(tone == nil ? p.accentForeground : .white)
+            .padding(.horizontal, 14)
+            .frame(height: 32)
+            .background(tone ?? (hovering ? p.accentStrong : p.accent), in: Capsule())
+            .opacity(disabled ? 0.45 : 1)
             .motion(hovering, Motion.quick)
-            .scaleEffect(hovering && !disabled ? 1.02 : 1)
-            .contentShape(Rectangle())
+            .contentShape(Capsule())
         }
         .buttonStyle(.fn)
         .disabled(disabled)
@@ -235,15 +316,13 @@ struct SecondaryButton: View {
                 Text(title)
             }
             .font(FN.bodyMedium)
-            .foregroundStyle(p.text)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(hovering ? p.hover : .clear,
-                        in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: FN.radius, style: .continuous).stroke(p.line, lineWidth: 1))
+            .foregroundStyle(p.foreground)
+            .padding(.horizontal, 14)
+            .frame(height: 32)
+            .background(hovering ? p.surfaceMuted : p.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(p.border, lineWidth: 1))
             .motion(hovering, Motion.quick)
-            .scaleEffect(hovering ? 1.02 : 1)
-            .contentShape(Rectangle())
+            .contentShape(Capsule())
         }
         .buttonStyle(.fn)
         .onHover { hovering = $0 }
@@ -282,13 +361,14 @@ struct BoxedField: View {
         TextField(placeholder, text: $text)
             .textFieldStyle(.plain)
             .font(FN.body)
-            .foregroundStyle(p.text)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .foregroundStyle(p.foreground)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
             .frame(width: width)
-            .background(
-                RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous)
-                    .stroke(focused ? p.accent.opacity(0.55) : p.line, lineWidth: 1)
+            .background(p.surface, in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous)
+                    .strokeBorder(focused ? p.borderStrong : p.border, lineWidth: 1)
             )
             .motion(focused, Motion.quick)
             .onSubmit { onSubmit?() }
@@ -308,7 +388,7 @@ struct ProgressBar: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Capsule().fill(p.finRest)
+                Capsule().fill(p.controlTrack)
                 Capsule().fill(tone)
                     .frame(width: max(0, min(1, ratio)) * geo.size.width)
                     .motion(ratio, Motion.data)
@@ -372,13 +452,15 @@ struct CommittedField: View {
             .font(font)
             .foregroundStyle(p.text)
             .focused($focused)
-            .padding(.horizontal, boxed ? 8 : 0)
-            .padding(.vertical, boxed ? 5 : 0)
+            .padding(.horizontal, boxed ? 12 : 0)
+            .padding(.vertical, boxed ? 7 : 0)
             .frame(minHeight: minHeight, alignment: .topLeading)
             .background {
                 if boxed {
-                    RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous)
-                        .stroke(focused ? p.accent.opacity(0.55) : p.line, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: axis == .vertical ? 14 : FN.radiusControl, style: .continuous)
+                        .fill(p.surface)
+                    RoundedRectangle(cornerRadius: axis == .vertical ? 14 : FN.radiusControl, style: .continuous)
+                        .strokeBorder(focused ? p.borderStrong : p.border, lineWidth: 1)
                 }
             }
             .motion(focused, Motion.quick)
@@ -443,14 +525,14 @@ private struct FNCheckbox: View {
         let on = configuration.isOn
         Button { configuration.isOn.toggle() } label: {
             HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(on ? p.accent : p.bg)
-                    .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(on ? p.accent : (hovering ? p.muted : p.faint.opacity(0.7)), lineWidth: 1))
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(on ? p.accent : p.surface)
+                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(on ? p.accent : (hovering ? p.textMuted : p.borderStrong), lineWidth: 1.5))
                     .overlay {
                         if on {
                             Icon("check", size: 11)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(p.accentForeground)
                                 .transition(.scale(scale: 0.5).combined(with: .opacity))
                         }
                     }
@@ -493,7 +575,7 @@ struct NumberStepper: View {
             step("plus", 1)
         }
         .frame(height: 28)
-        .overlay(RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous).stroke(p.line, lineWidth: 1))
+        .overlay(Capsule().strokeBorder(p.border, lineWidth: 1))
         .accessibilityElement()
         .accessibilityValue("\(value)")
         .accessibilityAdjustableAction { direction in

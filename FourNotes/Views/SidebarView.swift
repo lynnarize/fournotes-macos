@@ -1,10 +1,9 @@
 import SwiftUI
 
-// The fixed sidebar: who and where you are, search, the four tabs, quick
-// capture and settings. The tabs are cards, the open one raised; everything
-// else is a flat row.
-// Laid out after the reference design; the content is still that of
-// src/components/Sidebar.tsx.
+// The sidebar, after Arc, as on the web (src/components/Sidebar.tsx): the space
+// switcher with the mark, a search field that opens ⌘K, the four places with their
+// counts, then capture (Scan, Record) and Settings, and a last line saying where the
+// data lives.
 
 struct SidebarView: View {
     @Environment(\.palette) private var p
@@ -26,62 +25,59 @@ struct SidebarView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            profileCard
-                .padding(.bottom, 6)
+        VStack(alignment: .leading, spacing: 20) {
+            spaceSwitcher
 
-            searchCard
+            searchField
 
+            // The four places. The count gives way to a menu of quick actions while a
+            // row is in use.
             let counts = counts
-            VStack(spacing: 6) {
+            VStack(spacing: 2) {
                 ForEach(Tab.allCases) { tab in
                     TabRow(tab: tab, count: counts[tab] ?? 0, entries: { entries(for: tab) })
                 }
             }
-            .padding(.top, 28)
 
-            Spacer(minLength: 16)
+            Spacer(minLength: 0)
 
-            // A local model server holds a model in memory until it's stopped.
-            ForEach(servers.running) { kind in
-                ServerRunningRow(kind: kind)
-                    .padding(.bottom, 6)
-                    .transition(.opacity.combined(with: .offset(y: 6)))
-            }
-
-            // Capture, side by side.
-            HStack(spacing: 6) {
-                CaptureButton(icon: "scan", title: "Scan", help: "Scan a receipt, note or e-wallet screenshot",
-                              disabled: assistant.busy != nil) {
-                    assistant.pickAndScan()
+            VStack(alignment: .leading, spacing: 12) {
+                // A local model server holds a model in memory until it's stopped.
+                ForEach(servers.running) { kind in
+                    ServerRunningRow(kind: kind)
+                        .transition(.opacity.combined(with: .offset(y: 6)))
                 }
-                CaptureButton(icon: assistant.recording ? "stop" : "mic",
-                              title: assistant.recording ? "Stop" : "Record",
-                              help: assistant.recording ? "Stop recording" : "Record a voice note",
-                              tone: assistant.recording ? p.danger : nil,
-                              disabled: assistant.busy != nil && !assistant.recording) {
-                    assistant.recording ? assistant.stopRecording() : assistant.startRecording()
+
+                // Capture, side by side.
+                HStack(spacing: 8) {
+                    CaptureButton(icon: "scan", title: "Scan", help: "Scan a receipt, note or e-wallet screenshot",
+                                  disabled: assistant.busy != nil) {
+                        assistant.pickAndScan()
+                    }
+                    CaptureButton(icon: assistant.recording ? "stop" : "mic",
+                                  title: assistant.recording ? "Stop" : "Record",
+                                  help: assistant.recording ? "Stop recording" : "Record a voice note",
+                                  tone: assistant.recording ? p.danger : nil,
+                                  disabled: assistant.busy != nil && !assistant.recording) {
+                        assistant.recording ? assistant.stopRecording() : assistant.startRecording()
+                    }
+                }
+
+                NavRow(icon: "settings", title: "Settings", shortcut: "⌘,",
+                       badge: updates.hasUnseenUpdate ? "A new version is available" : nil) {
+                    // With a new version waiting, open where it can be downloaded.
+                    if updates.hasUnseenUpdate { nav.openSettings(section: "about") } else { nav.present(.settings) }
                 }
             }
-            .padding(.bottom, 8)
 
-            // Where your data is kept in step, as the web sidebar shows it.
-            if AppModel.shared.sync.isAvailable {
-                SyncStatusRow(sync: AppModel.shared.sync)
-                    .padding(.bottom, 2)
-            }
-
-            SidebarCard(icon: "settings", title: "Settings",
-                        badge: updates.hasUnseenUpdate ? "A new version is available" : nil) {
-                // With a new version waiting, open where it can be downloaded.
-                if updates.hasUnseenUpdate { nav.openSettings(section: "about") } else { nav.present(.settings) }
-            }
+            // Where the data lives.
+            SyncStatusRow(sync: AppModel.shared.sync.isAvailable ? AppModel.shared.sync : nil)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .padding(.top, 14)
-        .padding(.bottom, 16)
-        .frame(width: 256, alignment: .leading)
-        .background(p.panel)
+        .padding(.bottom, 14)
+        .frame(width: 248, alignment: .leading)
+        .background(p.sidebar)
         .animation(Motion.standard, value: servers.running)
         .entrance()
         .task { servers.startWatching() }
@@ -90,26 +86,14 @@ struct SidebarView: View {
 
     // MARK: - Who and where
 
-    private var displayName: String {
-        let name = store.settings.name?.trimmingCharacters(in: .whitespaces) ?? ""
-        return name.isEmpty ? "Four Notes" : name
-    }
-
-    private var initials: String? {
-        let name = store.settings.name?.trimmingCharacters(in: .whitespaces) ?? ""
-        guard !name.isEmpty else { return nil }
-        let letters = name.split(separator: " ").prefix(2).compactMap(\.first)
-        return String(letters).uppercased()
-    }
-
     private var spaceLabel: String {
         store.currentSpaceId.flatMap { id in store.spaces.first { $0.id == id }?.name } ?? "Personal"
     }
 
-    /// The account card: whose notes these are and which space is showing,
-    /// with spaces and settings behind it.
-    private var profileCard: some View {
-        MenuButton(help: "Spaces and settings") {
+    /// The space switcher: the mark, "Four Notes" and the space showing, with spaces,
+    /// search and settings behind it.
+    private var spaceSwitcher: some View {
+        MenuButton(help: "Switch space") {
             var entries: [MenuEntry] = []
             if !store.spaces.isEmpty {
                 entries.append(.header("Space"))
@@ -120,71 +104,44 @@ struct SidebarView: View {
                 entries.append(.divider)
             }
             entries += [
-                .item("Search or quick add…") { nav.present(.palette) },
+                .item("Search or add…") { nav.present(.palette) },
                 .item("Settings…") { nav.present(.settings) },
             ]
             return entries
         } label: {
-            SidebarCardBody { hovering in
+            HoverRow(cornerRadius: FN.radiusControl) { hovering in
                 HStack(spacing: 10) {
-                    avatar
+                    Logo(size: 30)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(displayName)
-                            .font(FN.font(15, .semibold))
-                            .foregroundStyle(p.text)
+                        Text("Four Notes")
+                            .font(FN.font(13, .medium))
+                            .foregroundStyle(p.foreground)
                             .lineLimit(1)
                         Text(spaceLabel)
                             .font(FN.small)
-                            .foregroundStyle(p.faint)
+                            .foregroundStyle(p.textMuted)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 4)
-                    Icon("chevronDown", size: 14)
-                        .foregroundStyle(hovering ? p.text : p.muted)
+                    Icon("chevronsUpDown", size: 15)
+                        .foregroundStyle(hovering ? p.foreground : p.textMuted)
                 }
-                .padding(.horizontal, 12)
-                .frame(height: 60)
+                .padding(.leading, 6)
+                .padding(.trailing, 10)
+                .frame(height: 48)
+                .contentShape(Rectangle())
             }
         }
-        .accessibilityLabel("\(displayName), \(spaceLabel)")
+        .accessibilityLabel("Four Notes, \(spaceLabel)")
     }
 
-    @ViewBuilder
-    private var avatar: some View {
-        if let initials {
-            Text(initials)
-                .font(FN.font(14, .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .background(p.accent, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        } else {
-            Logo(size: 28)
-                .frame(width: 36, height: 36)
-                .background(p.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-    }
-
-    private var searchCard: some View {
+    /// A field that opens search and quick add (⌘K).
+    private var searchField: some View {
         Button { nav.present(.palette) } label: {
-            SidebarCardBody { hovering in
-                HStack(spacing: 10) {
-                    Icon("search", size: 17)
-                    Text("Search…").font(FN.font(14)).lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text("⌘K")
-                        .font(FN.tiny)
-                        .foregroundStyle(p.faint)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(p.hover, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                }
-                .foregroundStyle(hovering ? p.text : p.muted)
-                .padding(.horizontal, 14)
-                .frame(height: 46)
-            }
+            SearchFieldBody()
         }
         .buttonStyle(.fn)
-        .accessibilityLabel("Search or quick add")
+        .accessibilityLabel("Search or add")
     }
 
     // MARK: - Tab actions
@@ -218,8 +175,38 @@ struct SidebarView: View {
 
 // MARK: - Rows
 
-/// One tab: icon and name, its count, and a "…" menu. The open tab is a
-/// raised card; the rest sit flat on the sidebar until hovered.
+/// The search field's look: a hairline field with the shortcut at its end.
+private struct SearchFieldBody: View {
+    @Environment(\.palette) private var p
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Icon("search", size: 15)
+            Text("Search or add").font(FN.font(13)).lineLimit(1)
+            Spacer(minLength: 4)
+            Text("⌘K")
+                .font(FN.font(11))
+                .foregroundStyle(p.textSecondary)
+                .padding(.horizontal, 7)
+                .frame(height: 20)
+                .background(p.surfaceMuted, in: Capsule())
+        }
+        .foregroundStyle(p.textMuted)
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .frame(height: 34)
+        .background(p.surface, in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous)
+            .strokeBorder(hovering ? p.borderStrong : p.border, lineWidth: 1))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .motion(hovering, Motion.quick)
+    }
+}
+
+/// One place: icon and name, its count, and a "…" menu. The kit's nav row: the open
+/// one on the accent wash, its icon in the accent.
 private struct TabRow: View {
     @Environment(\.palette) private var p
     @EnvironmentObject private var nav: Navigation
@@ -231,44 +218,42 @@ private struct TabRow: View {
 
     var body: some View {
         let selected = nav.tab == tab
-        let hasNew = nav.pulsing.contains(tab)
+        let hasNew = nav.pulsing.contains(tab) && !selected
 
-        HStack(spacing: 0) {
+        ZStack(alignment: .trailing) {
             Button { nav.tab = tab } label: {
-                HStack(spacing: 12) {
-                    Icon(tab.sidebarIcon, size: 18)
-                    Text(tab.title).font(selected ? FN.font(14, .medium) : FN.font(14))
+                HStack(spacing: 10) {
+                    Icon(tab.sidebarIcon, size: 16)
+                        .foregroundStyle(selected ? p.accent : (hovering ? p.foreground : p.textSecondary))
+                    Text(tab.title)
+                        .font(FN.font(13, selected ? .medium : .regular))
+                        .foregroundStyle(selected || hovering ? p.foreground : p.textSecondary)
                     if tab == .finance {
                         // Still being shaped: said plainly beside its name.
-                        Text("Beta")
-                            .font(FN.font(10, .semibold))
-                            .foregroundStyle(p.danger)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(p.danger.opacity(0.12), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .stroke(p.danger.opacity(0.45), lineWidth: 1))
+                        Badge(text: "Beta")
                     }
+                    Spacer(minLength: 4)
                     if hasNew {
                         Circle()
                             .fill(p.accent)
-                            .frame(width: 6, height: 6)
+                            .frame(width: 7, height: 7)
                             .transition(.scale(scale: 0.2).combined(with: .opacity))
+                            .accessibilityLabel("New from the assistant")
                     }
-                    Spacer(minLength: 4)
                     // The count gives way to the menu while the row is in use.
-                    if count > 0 && !(hovering || selected) {
+                    if count > 0 {
                         Text("\(count)")
                             .font(FN.small)
                             .monospacedDigit()
-                            .foregroundStyle(p.faint)
+                            .foregroundStyle(p.textMuted)
                             .contentTransition(.numericText())
-                            .transition(.opacity)
+                            .opacity(hovering ? 0 : 1)
                     }
                 }
-                .foregroundStyle(selected || hovering ? p.text : p.muted)
-                .padding(.leading, 14)
-                .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                .background(selected ? p.accentSubtle : (hovering ? p.hover : .clear),
+                            in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.fn)
@@ -276,94 +261,69 @@ private struct TabRow: View {
             .accessibilityValue(count > 0 ? "\(count) item\(count == 1 ? "" : "s")" : "")
             .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
 
-            if hovering || selected {
-                IconMenu("more", size: 18, box: 30, help: "\(tab.title) actions", entries: entries)
-                    .padding(.trailing, 8)
+            if hovering {
+                IconMenu("more", size: 16, box: 26, help: "\(tab.title) actions", entries: entries)
+                    .padding(.trailing, 4)
                     .transition(.opacity)
             }
         }
-        .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(selected ? p.bg : (hovering ? p.hover : .clear))
-                .shadow(color: selected ? p.shadow : .clear, radius: 6, y: 1)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(selected ? p.line : .clear, lineWidth: 1)
-        }
         .motion(selected, Motion.quick)
         .motion(hovering, Motion.quick)
-        .motion(hasNew, Motion.pulse)
+        .motion(hasNew, Motion.standard)
         .onHover { hovering = $0 }
     }
 }
 
-/// The account, search and bottom actions: flat rows that only light up
-/// under the pointer. Only the tabs are cards.
-private struct SidebarCardBody<Content: View>: View {
+/// A row at the bottom of the sidebar (Settings), in the nav row's style, with its
+/// shortcut at the end.
+private struct NavRow: View {
     @Environment(\.palette) private var p
     @State private var hovering = false
-    @ViewBuilder let content: (Bool) -> Content
-
-    var body: some View {
-        content(hovering)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(hovering ? p.hover : .clear,
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .motion(hovering, Motion.quick)
-            .contentShape(Rectangle())
-            .onHover { hovering = $0 }
-    }
-}
-
-/// A bottom action — capture, settings — in the reference's "Add new folder"
-/// and "Settings" places.
-private struct SidebarCard: View {
-    @Environment(\.palette) private var p
     let icon: String
     let title: String
-    var tone: Color?
-    var disabled = false
-    /// Puts a small dot on the icon; the text says why, for VoiceOver and
-    /// the tooltip.
+    var shortcut: String?
+    /// Puts a small dot on the icon; the text says why, for VoiceOver and the tooltip.
     var badge: String?
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            SidebarCardBody { hovering in
-                HStack(spacing: 12) {
-                    Icon(icon, size: 18).foregroundStyle(tone ?? (hovering ? p.text : p.muted))
-                        .overlay(alignment: .topTrailing) {
-                            if badge != nil {
-                                Circle()
-                                    .fill(p.danger)
-                                    .frame(width: 8, height: 8)
-                                    .overlay(Circle().stroke(p.panel, lineWidth: 1.5))
-                                    .offset(x: 3, y: -2)
-                                    .transition(.scale(scale: 0.2).combined(with: .opacity))
-                            }
+            HStack(spacing: 10) {
+                Icon(icon, size: 16)
+                    .overlay(alignment: .topTrailing) {
+                        if badge != nil {
+                            Circle()
+                                .fill(p.danger)
+                                .frame(width: 7, height: 7)
+                                .overlay(Circle().stroke(p.sidebar, lineWidth: 1.5))
+                                .offset(x: 3, y: -2)
+                                .transition(.scale(scale: 0.2).combined(with: .opacity))
                         }
-                        .animation(Motion.standard, value: badge != nil)
-                    Text(title).font(FN.font(14))
-                    Spacer(minLength: 0)
+                    }
+                    .animation(Motion.standard, value: badge != nil)
+                Text(title).font(FN.font(13))
+                Spacer(minLength: 0)
+                if let shortcut {
+                    Text(shortcut).font(FN.small).foregroundStyle(p.textMuted)
                 }
-                .foregroundStyle(hovering ? p.text : p.muted)
-                .padding(.horizontal, 14)
-                .frame(height: 46)
             }
+            .foregroundStyle(hovering ? p.foreground : p.textSecondary)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(hovering ? p.hover : .clear,
+                        in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.fn)
-        .disabled(disabled)
-        .opacity(disabled ? 0.5 : 1)
-        .motion(disabled, Motion.quick)
+        .onHover { hovering = $0 }
+        .motion(hovering, Motion.quick)
         .help(badge ?? "")
         .accessibilityLabel(title)
         .accessibilityValue(badge ?? "")
     }
 }
 
-/// Half of the capture row: icon over nothing, name beside it.
+/// Half of the capture row: the kit's secondary button, at regular weight.
 private struct CaptureButton: View {
     @Environment(\.palette) private var p
     @State private var hovering = false
@@ -376,20 +336,20 @@ private struct CaptureButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Icon(icon, size: 17)
-                Text(title).font(FN.font(14)).lineLimit(1)
+            HStack(spacing: 7) {
+                Icon(icon, size: 15)
+                Text(title).font(FN.font(13)).lineLimit(1)
             }
-            .foregroundStyle(tone ?? (hovering ? p.text : p.muted))
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .background(hovering ? p.hover : .clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(p.line, lineWidth: 1))
-            .contentShape(Rectangle())
+            .foregroundStyle(tone ?? p.foreground)
+            .frame(maxWidth: .infinity, minHeight: 32)
+            .background(hovering ? p.surfaceMuted : p.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(p.border, lineWidth: 1))
+            .contentShape(Capsule())
             .motion(hovering, Motion.quick)
         }
         .buttonStyle(.fn)
         .disabled(disabled)
-        .opacity(disabled ? 0.5 : 1)
+        .opacity(disabled ? 0.45 : 1)
         .help(help)
         .accessibilityLabel(help)
         .onHover { hovering = $0 && !disabled }
@@ -405,7 +365,7 @@ private struct ServerRunningRow: View {
     var body: some View {
         let working = servers.working.contains(kind)
         HStack(spacing: 8) {
-            Icon("warning", size: 14).foregroundStyle(p.boardAmberInk)
+            Icon("warning", size: 14).foregroundStyle(p.warning)
             VStack(alignment: .leading, spacing: 0) {
                 Text("\(kind.name) is running").font(FN.font(13, .medium)).foregroundStyle(p.text).lineLimit(1)
                 Text("Using memory until stopped").font(FN.tiny).foregroundStyle(p.faint).lineLimit(1)
@@ -417,13 +377,12 @@ private struct ServerRunningRow: View {
                 .foregroundStyle(p.danger)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(p.danger.opacity(0.12), in: Capsule())
+                .background(p.dangerSubtle, in: Capsule())
                 .disabled(working)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(p.boardAmber.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(p.boardAmber.opacity(0.35), lineWidth: 1))
+        .background(p.warningSubtle, in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(kind.name) server is running")
     }
@@ -441,16 +400,42 @@ extension Tab {
     }
 }
 
-/// Sync at a glance: a cloud, green once synced, red on an error, with the
-/// state beside it. Opens Settings at Sync.
+/// Where the data lives, as the web sidebar's last line: "Saved on this Mac", or the
+/// sync state, green once synced, red on an error. Opens Settings at Sync.
 private struct SyncStatusRow: View {
+    @Environment(\.palette) private var p
+    @EnvironmentObject private var nav: Navigation
+    /// Nil when this build has no sync.
+    var sync: GoogleSync?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(p.borderSubtle).frame(height: 1)
+            if let sync {
+                SyncLine(sync: sync)
+            } else {
+                HStack(spacing: 8) {
+                    Icon("cloud", size: 15)
+                    Text("On this Mac").lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .font(FN.small)
+                .foregroundStyle(p.textMuted)
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+            }
+        }
+    }
+}
+
+private struct SyncLine: View {
     @Environment(\.palette) private var p
     @EnvironmentObject private var nav: Navigation
     @ObservedObject var sync: GoogleSync
     @State private var hovering = false
 
     private var label: String {
-        guard sync.account != nil else { return "Turn on sync" }
+        guard sync.account != nil else { return "On this Mac" }
         switch sync.status {
         case .syncing: return "Syncing… · Google Drive"
         case .offline: return "Offline · Google Drive"
@@ -461,12 +446,12 @@ private struct SyncStatusRow: View {
     }
 
     private var tone: Color {
-        guard sync.account != nil else { return p.faint }
+        guard sync.account != nil else { return p.textMuted }
         switch sync.status {
         case .error: return p.danger
-        case .synced: return p.ok
-        case .idle: return sync.lastSynced == nil ? p.faint : p.ok
-        case .syncing, .offline: return p.faint
+        case .synced: return p.success
+        case .idle: return sync.lastSynced == nil ? p.textMuted : p.success
+        case .syncing, .offline: return p.textMuted
         }
     }
 
@@ -479,23 +464,28 @@ private struct SyncStatusRow: View {
     var body: some View {
         Button { nav.openSettings(section: "sync") } label: {
             HStack(spacing: 8) {
-                Icon("cloud", size: 13)
+                Icon("cloud", size: 15)
                     .foregroundStyle(tone)
                     .opacity(sync.status == .syncing ? 0.6 : 1)
                     .motion(sync.status, Motion.quick)
                 Text(label).lineLimit(1).truncationMode(.tail)
+                    .foregroundStyle(hovering ? p.foreground : p.textMuted)
                 Spacer(minLength: 0)
+                if sync.account == nil {
+                    Text("Turn on sync")
+                        .font(FN.font(12, .medium))
+                        .foregroundStyle(p.foreground)
+                        .underline(hovering)
+                }
             }
             .font(FN.small)
-            .foregroundStyle(hovering ? p.muted : p.faint)
-            .padding(.horizontal, 14)
-            .frame(height: 30)
-            .background(hovering ? p.hover : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.horizontal, 12)
+            .frame(height: 34)
             .contentShape(Rectangle())
         }
         .buttonStyle(.fn)
         .onHover { hovering = $0 }
         .help(help)
-        .accessibilityLabel(label)
+        .accessibilityLabel(sync.account == nil ? "Saved on this Mac. Turn on sync" : label)
     }
 }

@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-// Settings: appearance, general, sync, AI providers and API keys, data &
-// privacy. Budgets and categories live in Finance settings, as on the web.
-// Ported from src/components/SettingsModal.tsx.
+// Settings, after Arc, as on the web (src/components/SettingsModal.tsx): a big dialog
+// with the sections listed on the left (the version below them) and the chosen
+// section on the right. Budgets and categories live in Finance settings.
 
 private let KOFI_URL = "https://ko-fi.com/lynnarize"
 
@@ -26,6 +26,7 @@ struct SettingsView: View {
     @Environment(\.palette) private var p
     @Environment(\.dismiss) private var dismiss
     @Environment(\.closeModal) private var closeModal
+    @Environment(\.modalMaxHeight) private var windowLimit
     @EnvironmentObject private var store: Store
     @EnvironmentObject private var nav: Navigation
     @EnvironmentObject private var toasts: ToastCenter
@@ -33,9 +34,10 @@ struct SettingsView: View {
 
     @AppStorage("fournotes.theme") private var themeRaw = ThemeChoice.system.rawValue
     @AppStorage(BriefStyle.storageKey) private var briefStyleRaw = BriefStyle.paragraph.rawValue
+    @AppStorage(AccentChoice.storageKey) private var accentRaw = AccentChoice.neutral.rawValue
 
-    /// The sections left open, remembered between visits as the web app does.
-    @AppStorage("fournotes.settings.open") private var openRaw = "appearance"
+    /// The section showing, remembered between visits.
+    @AppStorage("fournotes.settings.section") private var current = "appearance"
     @State private var confirmWipe = false
     @State private var wipeConfirmation = ""
     /// Which of "On this Mac" / "In the cloud" is unfolded.
@@ -49,104 +51,169 @@ struct SettingsView: View {
 
     private var settings: AppSettings { store.settings }
 
+    private struct Section: Identifiable {
+        let id: String
+        let icon: String
+        let title: String
+        let summary: String
+    }
+
+    private var sections: [Section] {
+        var out = [
+            Section(id: "appearance", icon: "moon", title: "Appearance",
+                    summary: (ThemeChoice(rawValue: themeRaw) ?? .system).label
+                        + " · " + (AccentChoice(rawValue: accentRaw) ?? .neutral).label),
+            Section(id: "today", icon: "today", title: "Today",
+                    summary: (BriefStyle(rawValue: briefStyleRaw) ?? .paragraph).label),
+            Section(id: "dock", icon: "collapseLeft", title: "Edge Dock", summary: dockSummary),
+            Section(id: "general", icon: "settings", title: "General",
+                    summary: settings.currency + (settings.name.map { " · \($0)" } ?? "")),
+        ]
+        if sync.isAvailable { out.append(Section(id: "sync", icon: "cloud", title: "Sync", summary: syncSummary)) }
+        out += [
+            Section(id: "api", icon: "key", title: "AI & API keys", summary: apiSummary),
+            Section(id: "privacy", icon: "shield", title: "Data & privacy", summary: dataSummary),
+            Section(id: "about", icon: "info", title: "About", summary: aboutSummary),
+        ]
+        return out
+    }
+
     var body: some View {
-        SheetFrame(title: "Settings", width: 620, maxHeight: 760, actions: {
-            HStack(spacing: 0) {
-                GhostButton(action: { setAll(open: true) }) { Text("Expand all").font(FN.small) }
-                GhostButton(action: { setAll(open: false) }) { Text("Collapse all").font(FN.small) }
-            }
-        }) {
-            VStack(alignment: .leading, spacing: 12) {
-                section("appearance", icon: "moon", title: "Appearance",
-                        summary: (ThemeChoice(rawValue: themeRaw) ?? .system).label) {
-                    appearance
-                }
-                section("today", icon: "today", title: "Today",
-                        summary: (BriefStyle(rawValue: briefStyleRaw) ?? .paragraph).label) {
-                    todayBrief
-                }
-                section("dock", icon: "collapseLeft", title: "Edge Dock", summary: dockSummary) {
-                    edgeDock
-                }
-                section("general", icon: "settings", title: "General",
-                        summary: settings.currency + (settings.name.map { " · \($0)" } ?? "")) {
-                    general
-                }
-                if sync.isAvailable {
-                    section("sync", icon: "cloud", title: "Sync", summary: syncSummary) {
-                        syncSection
+        let sections = sections
+        let shown = sections.first { $0.id == current } ?? sections[0]
+        HStack(spacing: 0) {
+            // The sections, as the kit's nav rows.
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Settings")
+                    .font(FN.display(28))
+                    .tracking(FN.displayTracking(28))
+                    .foregroundStyle(p.foreground)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 6)
+                    .padding(.bottom, 16)
+                ForEach(sections) { section in
+                    SettingsNavRow(icon: section.icon, title: section.title, selected: section.id == shown.id,
+                                   badge: section.id == "about" && updates.available != nil) {
+                        withAnimation(Motion.standard) { current = section.id }
                     }
                 }
-                section("api", icon: "key", title: "AI & API keys", summary: apiSummary) {
-                    apiKeys
-                }
-                section("privacy", icon: "shield", title: "Data & privacy", summary: dataSummary) {
-                    privacy
-                }
-                section("about", icon: "info", title: "About", summary: aboutSummary) {
-                    about
-                }
-                kofi
+                Spacer(minLength: 12)
+                Text("Version \(AppVersion.short)")
+                    .font(FN.small)
+                    .foregroundStyle(p.textMuted)
+                    .padding(.horizontal, 12)
             }
+            .padding(12)
+            .frame(width: 232, alignment: .topLeading)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(p.sidebar)
+
+            Rectangle().fill(p.border).frame(width: 1)
+
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(shown.title).font(FN.font(16, .medium)).foregroundStyle(p.foreground)
+                        if !shown.summary.isEmpty {
+                            Text(shown.summary).font(FN.small).foregroundStyle(p.textMuted).lineLimit(1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    IconButton("x", size: 17, box: 32, help: "Close") {
+                        if let closeModal { closeModal() } else { dismiss() }
+                    }
+                }
+                .padding(.leading, 28)
+                .padding(.trailing, 12)
+                .frame(height: 64)
+                Rectangle().fill(p.borderSubtle).frame(height: 1)
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        content(for: shown.id)
+                        if shown.id == "about" { kofi }
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .id(shown.id)
+                    .transition(.opacity.combined(with: .offset(y: 6)))
+                }
+                .scrollBounceBehavior(.basedOnSize)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(p.surface)
         }
+        .frame(width: 860)
+        .frame(height: min(700, windowLimit ?? 700))
         .sheet(item: $legalDocument) { LegalSheet(document: $0) }
         .onAppear {
             updates.markSeen()
             if let requested = nav.settingsSection {
-                setOpen(requested, true)
+                current = requested
                 nav.settingsSection = nil
             }
         }
     }
 
-    // MARK: - Section chrome
-
-    private static let sectionIds = ["appearance", "today", "dock", "general", "sync",
-                                     "api", "privacy", "about"]
-
-    private var openSections: Set<String> {
-        Set(openRaw.split(separator: ",").map(String.init))
-    }
-
-    private func setOpen(_ id: String, _ open: Bool) {
-        var next = openSections
-        if open { next.insert(id) } else { next.remove(id) }
-        withAnimation(Motion.standard) { openRaw = next.sorted().joined(separator: ",") }
-    }
-
-    private func setAll(open: Bool) {
-        withAnimation(Motion.standard) { openRaw = open ? Self.sectionIds.joined(separator: ",") : "" }
-    }
-
-    /// A collapsible group, as SettingsSection.tsx: an icon tile, the title
-    /// with a one-line summary under it, and a chevron that turns when open.
-    private func section<Content: View>(_ id: String, icon: String, title: String,
-                                        summary: String,
-                                        @ViewBuilder _ content: () -> Content) -> some View {
-        let isOpen = openSections.contains(id)
-        return VStack(alignment: .leading, spacing: 0) {
-            SettingsSectionHeader(icon: icon, title: title, summary: summary, isOpen: isOpen) {
-                setOpen(id, !isOpen)
-            }
-
-            if isOpen {
-                Rectangle().fill(p.line).frame(height: 1)
-                content()
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .transition(.opacity.combined(with: .offset(y: -6)))
-            }
+    @ViewBuilder
+    private func content(for id: String) -> some View {
+        switch id {
+        case "today": todayBrief
+        case "dock": edgeDock
+        case "general": general
+        case "sync": syncSection
+        case "api": apiKeys
+        case "privacy": privacy
+        case "about": about
+        default: appearance
         }
-        .background(p.bg, in: RoundedRectangle(cornerRadius: FN.cardRadius, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: FN.cardRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: FN.cardRadius, style: .continuous).stroke(p.line, lineWidth: 1))
     }
 
     // MARK: - Appearance
 
-    /// Each look drawn as a tiny window in its own colours, as in setup.
+    /// Each look drawn as a tiny window in its own colours, as in setup; then the
+    /// accent, spent on what's selected or active.
     private var appearance: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            SectionTitle("Theme")
+            themes
+                .padding(.top, -14)
+            VStack(alignment: .leading, spacing: 10) {
+                SectionTitle("Accent")
+                accents
+                Text("Neutral keeps the app in ink. A colour marks what's selected, the primary button and progress.")
+                    .font(FN.small)
+                    .foregroundStyle(p.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var accents: some View {
+        HStack(spacing: 10) {
+            ForEach(AccentChoice.allCases, id: \.self) { choice in
+                let selected = accentRaw == choice.rawValue
+                Button { withAnimation(Motion.standard) { accentRaw = choice.rawValue } } label: {
+                    Circle()
+                        .fill(choice == .neutral ? p.foreground : choice.swatch)
+                        .frame(width: 26, height: 26)
+                        .overlay {
+                            if selected { Icon("check", size: 13, weight: 2.4).foregroundStyle(.white) }
+                        }
+                        .padding(3)
+                        .overlay(Circle().strokeBorder(selected ? p.borderStrong : .clear, lineWidth: 1.5))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.fn)
+                .help(choice.label)
+                .accessibilityLabel(choice.label)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+    }
+
+    private var themes: some View {
         HStack(spacing: 12) {
             ForEach(ThemeChoice.allCases, id: \.self) { choice in
                 let selected = themeRaw == choice.rawValue
@@ -154,19 +221,17 @@ struct SettingsView: View {
                     VStack(spacing: 8) {
                         ThemePreview(choice: choice)
                             .frame(height: 76)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(selected ? p.accent : p.line, lineWidth: selected ? 2 : 1))
-                            .shadow(color: .black.opacity(selected ? 0.12 : 0.05), radius: selected ? 10 : 5, y: 3)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(selected ? p.accent : p.border, lineWidth: selected ? 2 : 1))
                         HStack(spacing: 5) {
                             Icon(choice.icon, size: 12)
                             Text(choice.label)
                         }
-                        .font(FN.font(12.5, selected ? .semibold : .regular))
-                        .foregroundStyle(selected ? p.text : p.muted)
+                        .font(FN.font(12.5, selected ? .medium : .regular))
+                        .foregroundStyle(selected ? p.foreground : p.textSecondary)
                     }
                     .frame(maxWidth: .infinity)
-                    .scaleEffect(selected ? 1.03 : 1)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.fn)
@@ -893,15 +958,13 @@ struct SettingsView: View {
                 }
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color.hex(0xFF5E5B),
-                            in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
+                .frame(height: 32)
+                .background(Color.hex(0xFF5E5B), in: Capsule())
             }
             .buttonStyle(.fn)
         }
         .padding(14)
-        .background(p.hover, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(p.line, lineWidth: 1))
+        .background(p.surfaceMuted, in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
     }
 }
 
@@ -963,46 +1026,38 @@ struct KeyField: View {
     }
 }
 
-/// A settings section's header row. Tints on hover, like the web app's.
-private struct SettingsSectionHeader: View {
+/// A section in the settings list: the kit's nav row.
+private struct SettingsNavRow: View {
     @Environment(\.palette) private var p
     @State private var hovering = false
     let icon: String
     let title: String
-    let summary: String
-    let isOpen: Bool
-    let toggle: () -> Void
+    let selected: Bool
+    var badge = false
+    let action: () -> Void
 
     var body: some View {
-        Button(action: toggle) {
-            HStack(spacing: 12) {
+        Button(action: action) {
+            HStack(spacing: 10) {
                 Icon(icon, size: 16)
-                    .foregroundStyle(p.muted)
-                    .frame(width: 32, height: 32)
-                    .background(p.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(FN.font(14, .medium)).foregroundStyle(p.text)
-                    if !summary.isEmpty {
-                        Text(summary).font(FN.small).foregroundStyle(p.muted)
-                            .lineLimit(1).truncationMode(.tail)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Icon("chevron", size: 16)
-                    .foregroundStyle(p.muted)
-                    .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    .foregroundStyle(selected ? p.accent : (hovering ? p.foreground : p.textSecondary))
+                Text(title)
+                    .font(FN.font(13, selected ? .medium : .regular))
+                    .foregroundStyle(selected || hovering ? p.foreground : p.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if badge { Circle().fill(p.danger).frame(width: 7, height: 7) }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(hovering ? p.hover : .clear)
-            .motion(hovering, Motion.quick)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(selected ? p.accentSubtle : (hovering ? p.hover : .clear),
+                        in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.fn)
         .onHover { hovering = $0 }
-        .accessibilityLabel(title)
-        .accessibilityValue(summary)
-        .accessibilityHint(isOpen ? "Collapse this section" : "Expand this section")
-        .accessibilityAddTraits(.isButton)
+        .motion(hovering, Motion.quick)
+        .motion(selected, Motion.quick)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 }

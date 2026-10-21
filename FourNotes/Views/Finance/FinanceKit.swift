@@ -24,24 +24,23 @@ struct FinanceCard<Content: View>: View {
         content()
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(p.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(p.line, lineWidth: 1))
+            .background(p.surface)
+            .clipShape(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous).strokeBorder(p.border, lineWidth: 1))
             .entrance()
     }
 }
 
-/// A white tile inside a finance card.
+/// A tile inside a finance card: a shade darker than the card, no border.
 struct Tile<Content: View>: View {
     @Environment(\.palette) private var p
-    var cornerRadius: CGFloat = 12
+    var cornerRadius: CGFloat = 14
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         content()
-            .background(p.bg)
+            .background(p.surfaceMuted)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).stroke(p.line, lineWidth: 1))
     }
 }
 
@@ -55,20 +54,22 @@ struct MoneyText: View {
 
     var body: some View {
         let text = Money.format(amount, currency)
+        // Large amounts are display type, as on the web: regular weight, tight.
+        let font = size >= 24 ? FN.display(size) : FN.font(size, weight)
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             if let match = text.firstMatch(of: /^(.*?)([.,]\d{2})(\D*)$/) {
-                Text(String(match.1)).font(.system(size: size, weight: weight))
+                Text(String(match.1)).font(font)
                 // The cents, smaller and dimmed: $12,521.15
                 Text(String(match.2))
-                    .font(.system(size: size * 0.55, weight: .medium))
-                    .foregroundStyle(p.faint)
-                Text(String(match.3)).font(.system(size: size, weight: weight))
+                    .font(FN.font(size * 0.55, .medium))
+                    .foregroundStyle(p.textMuted)
+                Text(String(match.3)).font(font)
             } else {
-                Text(text).font(.system(size: size, weight: weight))
+                Text(text).font(font)
             }
         }
         .monospacedDigit()
-        .tracking(-0.4)
+        .tracking(size >= 24 ? FN.displayTracking(size) : -0.2)
         .contentTransition(.numericText())
     }
 }
@@ -82,22 +83,17 @@ struct DeltaPill: View {
     var body: some View {
         if let pct, pct.isFinite {
             let up = pct >= 0
-            let good = up == upIsGood
-            let tone = good ? p.ok : p.danger
             let magnitude = abs(pct * 100)
-            HStack(spacing: 2) {
+            let label = (magnitude >= 10 ? "\(Int(safe: magnitude.rounded()))%" : String(format: "%.1f%%", magnitude))
+            // Said plainly, in grey: colour stays for status.
+            HStack(spacing: 3) {
                 Icon("arrowUpRight", size: 12)
                     .rotationEffect(.degrees(up ? 0 : 90))
-                Text(magnitude >= 10 ? "\(Int(safe: magnitude.rounded()))%" : String(format: "%.1f%%", magnitude))
+                Text("\(label) \(up ? "up" : "down")")
             }
-            .font(FN.font(12, .medium))
-            .foregroundStyle(tone)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 1)
-            .background(tone.opacity(good ? 0.10 : 0.09),
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(tone.opacity(0.28), lineWidth: 1))
+            .font(FN.small)
+            .foregroundStyle(p.textMuted)
+            .help("\(label) \(up ? "more" : "less") than the period before")
             .transition(.scale(scale: 0.85).combined(with: .opacity))
             .animation(Motion.data, value: pct)
         }
@@ -112,28 +108,28 @@ struct StatusPill: View {
     var tone: Tone = .muted
     var dot = true
 
-    private var colors: (fg: Color, bg: Color, border: Color) {
+    /// The kit's badges: neutral for labels, the tones only for status.
+    private var colors: (fg: Color, bg: Color) {
         switch tone {
-        case .good: return (p.ok, p.ok.opacity(0.10), p.ok.opacity(0.30))
-        case .warn: return (p.boardAmberInk, p.boardAmber.opacity(0.14), p.boardAmber.opacity(0.35))
-        case .bad: return (p.danger, p.danger.opacity(0.09), p.danger.opacity(0.30))
-        case .muted: return (p.muted, p.hover, p.line)
-        case .accent: return (p.accent, p.accent.opacity(0.14), .clear)
+        case .good: return (p.success, p.successSubtle)
+        case .warn: return (p.warning, p.warningSubtle)
+        case .bad: return (p.danger, p.dangerSubtle)
+        case .muted: return (p.textSecondary, p.surfaceMuted)
+        case .accent: return (p.accent, p.accentSubtle)
         }
     }
 
     var body: some View {
         let c = colors
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             if dot { Circle().fill(c.fg).frame(width: 6, height: 6) }
             Text(text)
         }
-        .font(FN.font(12, .medium))
+        .font(FN.font(12, tone == .muted ? .regular : .medium))
         .foregroundStyle(c.fg)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 3)
-        .background(c.bg, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(c.border, lineWidth: 1))
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(c.bg, in: Capsule())
         .animation(Motion.standard, value: text)
         .fixedSize()
     }
@@ -154,11 +150,10 @@ struct FinanceCardTitle<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Icon(icon, size: 18).foregroundStyle(p.accent)
+            Icon(icon, size: 16).foregroundStyle(p.textSecondary)
             Text(title)
-                .font(FN.serif(19))
-                .tracking(-0.2)
-                .foregroundStyle(p.text)
+                .font(FN.font(16, .medium))
+                .foregroundStyle(p.foreground)
             if let hint {
                 Icon("info", size: 14).foregroundStyle(p.faint).help(hint)
             }
@@ -169,42 +164,49 @@ struct FinanceCardTitle<Trailing: View>: View {
     }
 }
 
-/// Small segmented control used in card headers.
+/// The kit's segmented control (`.seg`): a track with the chosen segment raised on it.
+/// The raised segment slides from one choice to the next.
 struct SegmentedTabs: View {
     @Environment(\.palette) private var p
+    @Environment(\.colorScheme) private var scheme
+    @Namespace private var raised
     let items: [(id: String, label: String)]
     @Binding var selection: String
     var alert: String?
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 2) {
             ForEach(items, id: \.id) { item in
-                Button { selection = item.id } label: {
+                let on = selection == item.id
+                Button { withAnimation(Motion.standard) { selection = item.id } } label: {
                     Text(item.label)
-                        .font(FN.font(12, selection == item.id ? .semibold : .regular))
-                        .foregroundStyle(selection == item.id ? p.accent : p.muted)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(selection == item.id ? p.accent.opacity(0.14) : .clear,
-                                    in: RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous))
-                        .scaleEffect(selection == item.id ? 1.02 : 1)
-                        .motion(selection == item.id, Motion.quick)
+                        .font(FN.font(12, on ? .medium : .regular))
+                        .foregroundStyle(on ? p.foreground : p.textSecondary)
+                        .padding(.horizontal, 11)
+                        .frame(height: 24)
+                        .background {
+                            if on {
+                                Capsule()
+                                    .fill(scheme == .dark ? p.surfaceRaised : p.surface)
+                                    .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
+                                    .matchedGeometryEffect(id: "segment", in: raised)
+                            }
+                        }
                         .overlay(alignment: .topTrailing) {
-                            if alert == item.id, selection != item.id {
+                            if alert == item.id, !on {
                                 Circle().fill(p.danger).frame(width: 6, height: 6).offset(x: -2, y: 2)
                                     .transition(.scale(scale: 0.2).combined(with: .opacity))
                             }
                         }
-                        .animation(Motion.standard,
-                                   value: alert == item.id && selection != item.id)
-                        .contentShape(Rectangle())
+                        .animation(Motion.standard, value: alert == item.id && !on)
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.fn)
+                .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
-        .padding(2)
-        .background(p.bg, in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: FN.radius, style: .continuous).stroke(p.line, lineWidth: 1))
+        .padding(3)
+        .background(p.surfaceMuted, in: Capsule())
     }
 }
 

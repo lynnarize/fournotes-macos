@@ -142,12 +142,11 @@ private struct IconMenuLabel: View {
     var body: some View {
         let lit = hovering || open
         Icon(name, size: size)
-            .foregroundStyle(tone ?? (lit ? p.text : p.muted))
+            .foregroundStyle(tone ?? (lit ? p.foreground : p.textSecondary))
             .frame(width: box, height: box)
-            .background(lit ? p.hover : .clear,
-                        in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
+            .background(lit ? p.hover : .clear, in: Circle())
             .motion(lit, Motion.quick)
-            .contentShape(Rectangle())
+            .contentShape(Circle())
             .onHover { hovering = $0 }
     }
 }
@@ -185,8 +184,8 @@ private struct TextMenuLabel: View {
         .padding(.horizontal, 8)
         .frame(minWidth: width, alignment: .leading)
         .frame(height: 30)
-        .background(lit ? p.hover : .clear,
-                    in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
+        .background(lit ? (open ? p.accentSubtle : p.hover) : .clear,
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .motion(lit, Motion.quick)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
@@ -227,15 +226,15 @@ private struct SelectLabel: View {
             Icon("chevronDown", size: 12).foregroundStyle(p.faint)
         }
         .font(FN.body)
-        .foregroundStyle(p.text)
-        .padding(.horizontal, 9)
+        .foregroundStyle(p.foreground)
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
         .frame(width: width)
         .frame(minWidth: 72)
-        .frame(height: 28)
-        .background(hovering && enabled ? p.hover : p.bg,
-                    in: RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous)
-            .stroke(open ? p.accent.opacity(0.55) : p.line, lineWidth: 1))
+        .frame(height: 30)
+        .background(p.surface, in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous)
+            .strokeBorder(open || (hovering && enabled) ? p.borderStrong : p.border, lineWidth: 1))
         .opacity(enabled ? 1 : 0.5)
         .motion(hovering || open, Motion.quick)
         .contentShape(Rectangle())
@@ -466,12 +465,12 @@ private struct ModalLayer: View {
             content
                 .environment(\.closeModal, CloseModalAction(run: close))
                 .environment(\.modalMaxHeight, max(200, size.height * 0.8))
-                .background(p.bg)
-                .clipShape(RoundedRectangle(cornerRadius: FN.cardRadius, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: FN.cardRadius, style: .continuous)
-                    .stroke(p.line, lineWidth: 1))
-                .shadow(color: p.shadowStrong, radius: 2, y: 1)
-                .shadow(color: p.shadowStrong, radius: 16, y: 4)
+                .background(p.surface)
+                .clipShape(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: FN.radiusPanel, style: .continuous)
+                    .strokeBorder(p.border, lineWidth: 1))
+                .shadow(color: p.shadow, radius: 5, y: 2)
+                .shadow(color: p.shadowStrong, radius: 24, y: 10)
                 .scaleEffect(shown || Motion.reduce ? 1 : 0.97, anchor: .top)
                 .opacity(shown ? 1 : 0)
                 .padding(.top, max(16, size.height * 0.1))
@@ -635,18 +634,18 @@ private struct MenuPanel: View {
         .scrollIndicators(contentHeight > maxHeight ? .automatic : .never)
         .frame(height: contentHeight == 0 ? nil : min(contentHeight, maxHeight))
         .fixedSize(horizontal: true, vertical: false)
-        .background(p.bg)
-        .clipShape(RoundedRectangle(cornerRadius: FN.cardRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: FN.cardRadius, style: .continuous).stroke(p.line, lineWidth: 1))
-        .shadow(color: p.shadowStrong, radius: 1, y: 1)
-        .shadow(color: p.shadowStrong, radius: 12, y: 4)
+        .background(p.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(p.border, lineWidth: 1))
+        .shadow(color: p.shadow, radius: 5, y: 2)
+        .shadow(color: p.shadowStrong, radius: 22, y: 10)
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
         .accessibilityLabel("Menu")
     }
 
     private var separator: some View {
-        Rectangle().fill(p.line).frame(height: 1).padding(.vertical, 4).padding(.horizontal, 2)
+        Rectangle().fill(p.borderSubtle).frame(height: 1).padding(.vertical, 5).padding(.horizontal, 10)
     }
 
     private var backRow: some View {
@@ -673,10 +672,9 @@ private struct MenuPanel: View {
         case .divider:
             separator
         case .header:
-            Text(entry.title.uppercased())
-                .font(FN.font(10.5, .medium))
-                .tracking(0.5)
-                .foregroundStyle(p.faint)
+            Text(entry.title)
+                .font(FN.small)
+                .foregroundStyle(p.textMuted)
                 .padding(.horizontal, 10)
                 .padding(.top, index == 0 ? 4 : 8)
                 .padding(.bottom, 3)
@@ -702,11 +700,11 @@ private struct MenuPanel: View {
                         Icon("check", size: 14).foregroundStyle(p.accent)
                     }
                 }
-                .foregroundStyle(entry.destructive ? p.danger : p.text)
+                .foregroundStyle(entry.destructive ? p.danger : p.foreground)
                 .padding(.horizontal, 10)
                 .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-                .background(lit ? p.hover : .clear,
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(lit ? (entry.destructive ? p.dangerSubtle : p.hover) : .clear,
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .contentShape(Rectangle())
                 .opacity(entry.enabled ? 1 : 0.4)
             }

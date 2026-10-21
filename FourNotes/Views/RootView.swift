@@ -5,8 +5,6 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(\.palette) private var p
-    @Environment(\.colorScheme) private var scheme
-    @AppStorage("fournotes.theme") private var themeRaw = ThemeChoice.system.rawValue
     @EnvironmentObject private var store: Store
     @EnvironmentObject private var nav: Navigation
     @EnvironmentObject private var assistant: Assistant
@@ -17,30 +15,17 @@ struct RootView: View {
                 SidebarView()
                     .transition(.move(edge: .leading).combined(with: .opacity))
                     .zIndex(1)
-                Divider().overlay(p.line).zIndex(1)
+                Rectangle().fill(p.border).frame(width: 1).zIndex(1)
             }
             // Clipped, so a pane sliding out to the left (the notes list in
             // focus mode) goes behind the sidebar instead of across it.
             main.clipped()
         }
         .animation(Motion.screen, value: focused)
-        .background {
-            // Today sits on the setup's soft light; the other tabs are plain.
-            // Both reach up under the hidden title bar, which has no colour of
-            // its own: `main` is clipped at the safe area, so without this the
-            // strip above every page showed the window's white. The page
-            // colour stays underneath so the fade to and from Today never
-            // shows it either.
-            ZStack {
-                p.bg
-                if nav.tab == .today {
-                    CalmBackground.page(p, theme: ThemeChoice(rawValue: themeRaw) ?? .system, scheme: scheme)
-                        .transition(.opacity)
-                }
-            }
-            .ignoresSafeArea()
-        }
-        .animation(Motion.screen, value: nav.tab == .today)
+        // The page colour reaches up under the hidden title bar, which has no colour of
+        // its own: `main` is clipped at the safe area, so without this the strip above
+        // every page showed the window's white. As on the web, no wash behind Today.
+        .background(p.bg.ignoresSafeArea())
         // Pages scroll to the top edge cleanly, with no blur or fade laid over
         // the first lines.
         .scrollEdgeEffectHidden(true, for: .top)
@@ -116,9 +101,7 @@ struct RootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Today's soft light is drawn behind the whole window (below), so it
-        // reaches up under the title bar; the page itself is clear.
-        .background(nav.tab == .today ? Color.clear : p.bg)
+        .background(p.bg)
         .entrance(delay: 0.03)
     }
 
@@ -132,12 +115,10 @@ struct RootView: View {
             NotesView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if nav.tab == .today, store.ready {
-            // Today is one page that fits the window: no scrolling. The
-            // conversation opens over it rather than pushing it down.
+            // Today scrolls itself: the page beside its cards, the conversation
+            // opening as a card in the page.
             TodayView()
-                .padding(.horizontal, 28)
-                .frame(maxWidth: FN.maxContentWidth, maxHeight: .infinity)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -160,8 +141,8 @@ struct RootView: View {
             HStack(spacing: 12) {
                 Text(nav.tab.title)
                     .font(FN.title)
-                    .tracking(-0.4)
-                    .foregroundStyle(p.text)
+                    .tracking(FN.displayTracking(34))
+                    .foregroundStyle(p.foreground)
                 if let space = store.spaceName {
                     Chip(tone: nil) {
                         Icon("users", size: 12)
@@ -169,8 +150,8 @@ struct RootView: View {
                     }
                 }
             }
-            .padding(.top, 28)
-            .padding(.bottom, 20)
+            .padding(.top, 32)
+            .padding(.bottom, 24)
         }
     }
 

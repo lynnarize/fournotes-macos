@@ -52,6 +52,9 @@ final class Navigation: ObservableObject {
     /// Text to put in the assistant's input and open it with — filled in, not
     /// sent, so the request can be reviewed first.
     @Published var assistantDraft: String?
+    /// Today's conversation is open as a card under the greeting, in place of the
+    /// composer and the brief. "Open on Today" in the corner panel opens it too.
+    @Published var todayChat = false
 
     /// The day a brief has already been requested for. Lives here rather than
     /// on TodayView, which is destroyed and rebuilt on every tab switch — so

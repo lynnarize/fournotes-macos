@@ -1,7 +1,8 @@
 import SwiftUI
 
-// Notes: a list of note cards beside a large editor.
-// Ported from src/components/NotesView.tsx.
+// Notes: a list beside a large editor, as on the web (src/components/NotesView.tsx).
+// The list carries the tab's title, a search field and the notes; the open one sits
+// on the accent wash.
 
 private let SORTS: [(id: String, label: String)] = [
     ("updated", "Last edited"),
@@ -22,7 +23,6 @@ struct NotesView: View {
     @AppStorage("fournotes.notesListHidden") private var listHidden = false
 
     @State private var query = ""
-    @State private var searching = false
     @State private var cleanedUp = false
     @FocusState private var searchFocused: Bool
 
@@ -68,11 +68,11 @@ struct NotesView: View {
                     if !listHidden && !nav.focusMode {
                         listColumn
                             .frame(width: 330)
-                            .background(p.bg)
+                            .background(p.background)
                             .transition(.move(edge: .leading).combined(with: .opacity))
                             // Above the editor, whose text slides under it.
                             .zIndex(1)
-                        Rectangle().fill(p.line).frame(width: 1)
+                        Rectangle().fill(p.border).frame(width: 1)
                             .transition(.opacity)
                             .zIndex(1)
                     }
@@ -102,7 +102,6 @@ struct NotesView: View {
         .task(id: nav.focus) {
             guard let link = nav.consumeFocus([.notes]) else { return }
             query = ""
-            searching = false
             nav.selectedNoteId = link.id
         }
     }
@@ -112,9 +111,9 @@ struct NotesView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Notes")
-                .font(FN.title)
-                .tracking(-0.4)
-                .foregroundStyle(p.text)
+                .font(FN.display(28))
+                .tracking(FN.displayTracking(28))
+                .foregroundStyle(p.foreground)
             VStack(spacing: 16) {
                 EmptyStart(
                     title: "No notes yet",
@@ -133,62 +132,67 @@ struct NotesView: View {
 
     // MARK: - List
 
+    /// The list carries the tab's title, as on the web: "Notes", sort and New, a search
+    /// field, then the notes.
     private var listColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
+            HStack(spacing: 4) {
                 Text("Notes")
-                    .font(FN.title)
-                    .tracking(-0.4)
-                    .foregroundStyle(p.text)
+                    .font(FN.display(28))
+                    .tracking(FN.displayTracking(28))
+                    .foregroundStyle(p.foreground)
+                    .help("\(liveNotes.count) note\(liveNotes.count == 1 ? "" : "s")")
                 Spacer()
-                IconMenu("sort", size: 19, help: "Sort notes") {
+                IconMenu("sort", size: 17, box: 32, help: "Sort notes") {
                     SORTS.map { option in
                         .item(option.label, checked: sort == option.id) { sort = option.id }
                     }
                 }
-                IconButton("search", size: 18, box: 30, help: "Search notes") {
-                    searching.toggle()
-                    if !searching { query = "" } else { searchFocused = true }
-                }
-                .background(searching ? p.hover : .clear,
-                            in: RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous))
-                .motion(searching, Motion.quick)
+                PrimaryButton(title: "New", icon: "plus", action: newNote)
+                    .help("New note (⌘N)")
             }
-            .padding(.top, 28)
-            .padding(.bottom, 20)
+            .padding(.leading, 8)
+            .padding(.top, 26)
+            .padding(.bottom, 14)
 
-            addNoteButton
-                .padding(.bottom, 12)
-
-            if searching {
-                TextField("Search by words or meaning", text: $query)
+            HStack(spacing: 8) {
+                Icon("search", size: 15).foregroundStyle(p.textMuted)
+                TextField("Search notes", text: $query)
                     .textFieldStyle(.plain)
-                    .font(FN.body)
+                    .font(FN.font(13))
+                    .foregroundStyle(p.foreground)
                     .focused($searchFocused)
-                    .onExitCommand {
-                        searching = false
-                        query = ""
-                    }
-                    .padding(.horizontal, 12)
-                    .frame(height: 38)
-                    .background(p.bg, in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: FN.radius, style: .continuous)
-                        .stroke(p.line, lineWidth: 1))
-                    .padding(.bottom, 12)
-                    .transition(.opacity.combined(with: .offset(y: -8)))
+                    .onExitCommand { query = ""; searchFocused = false }
+                if !query.isEmpty {
+                    IconButton("x", size: 12, box: 22, help: "Clear") { query = "" }
+                        .transition(.opacity)
+                }
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 6)
+            .frame(height: 34)
+            .background(p.surface, in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous)
+                .strokeBorder(searchFocused ? p.borderStrong : p.border, lineWidth: 1))
+            .motion(searchFocused, Motion.quick)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 10)
+
+            if query.trimmingCharacters(in: .whitespaces).count >= 3 {
+                SectionTitle("Best matches first").padding(.horizontal, 12)
             }
 
             ScrollView {
                 let rows = list
                 let selectedID = selected?.id
-                LazyVStack(spacing: 10) {
+                LazyVStack(spacing: 2) {
                     ForEach(rows) { note in
                         noteCard(note, isSelected: note.id == selectedID)
                             .transition(.move(edge: .leading).combined(with: .opacity))
                     }
                     if !query.isEmpty && rows.isEmpty {
                         Text("No matching notes.")
-                            .font(FN.body).foregroundStyle(p.faint)
+                            .font(FN.body).foregroundStyle(p.textMuted)
                             .padding(.vertical, 24)
                     }
                 }
@@ -197,108 +201,76 @@ struct NotesView: View {
             }
             .scrollIndicators(.never)
         }
-        .padding(.horizontal, 18)
-        .animation(Motion.standard, value: searching)
-    }
-
-    private var addNoteButton: some View {
-        HoverRow(cornerRadius: 10) { hovering in
-            Button(action: newNote) {
-                HStack(spacing: 12) {
-                    Icon("plus", size: 18)
-                    Text("Add new note").font(FN.font(14))
-                    Spacer(minLength: 4)
-                    Text("⌘N").font(FN.tiny).foregroundStyle(p.faint)
-                }
-                .foregroundStyle(hovering ? p.text : p.text.opacity(0.85))
-                .padding(.horizontal, 16)
-                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                .background(p.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.fn)
-            .accessibilityLabel("New note")
-        }
+        .padding(.horizontal, 12)
+        .animation(Motion.standard, value: query.isEmpty)
     }
 
     private static let cardDate: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US")
-        f.dateFormat = "d MMM"
+        f.dateFormat = "MMM d"
         return f
     }()
 
     private static let cardDateWithYear: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US")
-        f.dateFormat = "d MMM yyyy"
+        f.dateFormat = "MMM d, yyyy"
         return f
     }()
 
-    /// "19 APR", or "19 APR 2025" once it is not this year.
+    /// "Apr 19", or "Apr 19, 2025" once it is not this year.
     private func cardDate(_ iso: String) -> String {
         guard let d = DateKit.date(iso) else { return "" }
         let sameYear = Calendar.current.isDate(d, equalTo: Date(), toGranularity: .year)
-        return (sameYear ? Self.cardDate : Self.cardDateWithYear).string(from: d).uppercased()
+        return (sameYear ? Self.cardDate : Self.cardDateWithYear).string(from: d)
     }
 
     private func noteCard(_ note: Note, isSelected: Bool) -> some View {
         let preview = NoteText.snippet(note.content)
-        let linked = store.liveTodos.filter { $0.noteId == note.id }.count
-            + store.liveTransactions.filter { $0.noteId == note.id }.count
+        let tasks = store.liveTodos.filter { $0.noteId == note.id }.count
+        let expenses = store.liveTransactions.filter { $0.noteId == note.id }.count
+        let linked = [tasks > 0 ? "\(tasks) task\(tasks == 1 ? "" : "s")" : "",
+                      expenses > 0 ? "\(expenses) expense\(expenses == 1 ? "" : "s")" : ""]
+            .filter { !$0.isEmpty }.joined(separator: ", ")
         let tags = NoteText.tags(note.tags)
         let source = SOURCE_LABEL[note.source] ?? ""
 
         return Button { open(note.id) } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 6) {
-                    Text(cardDate(note.updatedAt))
-                    if !source.isEmpty {
-                        Text("·")
-                        Text(source.uppercased())
+            NoteRowBody(isSelected: isSelected) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(note.title.isEmpty ? "Untitled" : note.title)
+                            .font(FN.font(13.5, .medium))
+                            .foregroundStyle(note.title.isEmpty ? p.textMuted : p.foreground)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(cardDate(note.updatedAt))
+                            .font(FN.small)
+                            .monospacedDigit()
+                            .foregroundStyle(p.textMuted)
                     }
-                    Spacer(minLength: 4)
-                    if linked > 0 {
-                        HStack(spacing: 2) {
-                            Icon("link", size: 11)
-                            Text("\(linked)")
+                    Text(preview.isEmpty ? "No text yet" : preview)
+                        .font(FN.font(12.5))
+                        .foregroundStyle(p.textSecondary)
+                        .lineSpacing(2)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    if !tags.isEmpty || !linked.isEmpty || !source.isEmpty {
+                        HStack(spacing: 6) {
+                            if !tags.isEmpty { tagRow(tags) }
+                            if !linked.isEmpty {
+                                HStack(spacing: 3) { Icon("link", size: 11); Text(linked) }
+                                    .help("Linked to this note")
+                            }
+                            if !source.isEmpty { Text(source) }
                         }
-                        .help("\(linked) linked item\(linked == 1 ? "" : "s")")
+                        .font(FN.small)
+                        .foregroundStyle(p.textMuted)
+                        .lineLimit(1)
                     }
-                }
-                .font(FN.font(11, .medium))
-                .tracking(0.8)
-                .foregroundStyle(p.faint)
-                .lineLimit(1)
-
-                Text(note.title.isEmpty ? "Untitled" : note.title)
-                    .font(FN.font(15, isSelected ? .semibold : .medium))
-                    .foregroundStyle(isSelected ? p.text : p.text.opacity(0.78))
-                    .lineLimit(1)
-                    .padding(.top, 8)
-
-                Text(preview.isEmpty ? "No text yet" : preview)
-                    .font(FN.body)
-                    .foregroundStyle(isSelected ? p.muted : p.faint)
-                    .lineSpacing(3)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .padding(.top, 6)
-
-                if !tags.isEmpty {
-                    tagRow(tags)
-                        .padding(.top, 14)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 16)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .background(isSelected ? p.hover : p.panel,
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(isSelected ? p.faint.opacity(0.35) : .clear, lineWidth: 1))
-            .motion(isSelected, Motion.quick)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.fn)
         .flashes(nav.isFlashing(note.id), palette: p)
@@ -311,16 +283,15 @@ struct NotesView: View {
         }
     }
 
-    /// As many tags as fit on one line (at most three), then "+N more", as
-    /// outlined chips.
+    /// As many tags as fit on one line (at most three), then "+N", as outlined chips.
     private func tagRow(_ tags: [String]) -> some View {
         ViewThatFits(in: .horizontal) {
             ForEach(Array((0...min(3, tags.count)).reversed()), id: \.self) { count in
-                HStack(spacing: 6) {
+                HStack(spacing: 4) {
                     ForEach(tags.prefix(count), id: \.self) { tag in
                         outlinedChip(tag.prefix(1).uppercased() + tag.dropFirst())
                     }
-                    if tags.count > count { outlinedChip("+\(tags.count - count) more") }
+                    if tags.count > count { Text("+\(tags.count - count)") }
                 }
             }
         }
@@ -328,13 +299,12 @@ struct NotesView: View {
 
     private func outlinedChip(_ text: String) -> some View {
         Text(text)
-            .font(FN.font(11, .medium))
-            .tracking(0.4)
-            .foregroundStyle(p.muted)
+            .font(FN.small)
+            .foregroundStyle(p.textMuted)
             .padding(.horizontal, 8)
-            .frame(height: 24)
-            .background(p.bg.opacity(0.6), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(p.line, lineWidth: 1))
+            .frame(height: 20)
+            .background(p.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(p.border, lineWidth: 1))
             .fixedSize()
     }
 
@@ -370,7 +340,6 @@ struct NotesView: View {
 
     private func newNote() {
         query = ""
-        searching = false
         leave(nil)
         // Empty, so the "Untitled" placeholder doesn't need deleting.
         let n = store.addNote { $0.title = "" }
@@ -387,5 +356,26 @@ struct NotesView: View {
             && (DateKit.date(n.updatedAt).map { $0 < cutoff } ?? false) {
             store.remove(.notes, n.id)
         }
+    }
+}
+
+/// A note in the list: flat, tinted under the pointer, on the accent wash when open.
+private struct NoteRowBody<Content: View>: View {
+    @Environment(\.palette) private var p
+    @State private var hovering = false
+    let isSelected: Bool
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background(isSelected ? p.accentSubtle : (hovering ? p.hover : .clear),
+                        in: RoundedRectangle(cornerRadius: FN.radiusControl, style: .continuous))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .motion(isSelected, Motion.quick)
+            .motion(hovering, Motion.quick)
     }
 }

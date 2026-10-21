@@ -108,6 +108,16 @@ final class Assistant: ObservableObject {
 
     func clear() { messages.removeAll() }
 
+    /// Asks the last question again, in place of the reply it got. Not for a reply
+    /// that filed something: asking again would file it twice.
+    func retry() async {
+        guard busy == nil, let last = messages.last, last.role == .assistant, last.filed.isEmpty,
+              let index = messages.lastIndex(where: { $0.role == .user }) else { return }
+        let question = messages[index].content
+        messages.removeSubrange(index...)
+        await send(question)
+    }
+
     // MARK: - Chat
 
     @discardableResult

@@ -255,25 +255,28 @@ struct NoteEditorView: View {
                         Icon("share", size: 15)
                         Text("Share").font(FN.bodyMedium)
                     }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
+                    .foregroundStyle(p.foreground)
+                    .padding(.leading, 12)
+                    .padding(.trailing, 10)
                     .frame(height: 32)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.fn)
 
-                Rectangle().fill(.white.opacity(0.25)).frame(width: 1, height: 32)
+                Rectangle().fill(p.border).frame(width: 1, height: 18)
 
                 Button(action: copyText) {
                     Icon("copy", size: 15)
-                        .foregroundStyle(.white)
-                        .frame(width: 32, height: 32)
+                        .foregroundStyle(p.foreground)
+                        .frame(width: 34, height: 32)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.fn)
                 .help("Copy note text")
             }
-            .background(p.accent, in: RoundedRectangle(cornerRadius: FN.radius, style: .continuous))
+            // The kit's secondary button: one primary per surface, and this isn't it.
+            .background(p.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(p.border, lineWidth: 1))
             .fixedSize()
 
             IconMenu("more", size: 20, help: "More actions") {
@@ -462,9 +465,8 @@ struct NoteEditorView: View {
 
     private func tb(_ icon: String, _ label: String, active: Bool = false, enabled: Bool = true,
                     action: @escaping () -> Void) -> some View {
-        IconButton(icon, size: 19, box: 30, tone: active ? p.text : nil, help: label, action: action)
-            .background(active ? p.hover : .clear,
-                        in: RoundedRectangle(cornerRadius: FN.radiusSmall, style: .continuous))
+        IconButton(icon, size: 18, box: 32, tone: active ? p.foreground : nil, help: label, action: action)
+            .background(active ? p.accentSubtle : .clear, in: Circle())
             .disabled(!enabled)
             .opacity(enabled ? 1 : 0.35)
     }
@@ -485,7 +487,7 @@ struct NoteEditorView: View {
             ]
         } label: {
             Icon("plus", size: 15)
-                .foregroundStyle(.white)
+                .foregroundStyle(p.accentForeground)
                 .frame(width: 24, height: 24)
                 .background(p.accent, in: Circle())
                 .frame(width: 30, height: 30)
@@ -778,14 +780,12 @@ struct NoteEditorView: View {
             .help("Remove tag")
             .accessibilityLabel("Remove tag \(tag)")
         }
-        .font(FN.font(12, .medium))
-        .tracking(0.3)
-        .foregroundStyle(p.muted)
+        .font(FN.font(12.5))
+        .foregroundStyle(p.textSecondary)
         .padding(.leading, 10)
-        .padding(.trailing, 5)
-        .frame(height: 28)
-        .background(p.panel, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(p.line, lineWidth: 1))
+        .padding(.trailing, 4)
+        .frame(height: 26)
+        .background(p.surfaceMuted, in: Capsule())
         .transition(.scale(scale: 0.9).combined(with: .opacity))
     }
 
@@ -798,16 +798,13 @@ struct NoteEditorView: View {
                 Button { tagDraft = "" } label: {
                     HStack(spacing: 6) {
                         Icon("plus", size: 12)
-                        Text("Add new tag")
+                        Text("Add tag")
                     }
-                    .font(FN.font(12, .medium))
-                    .tracking(0.3)
-                    .foregroundStyle(hovering ? p.text : p.muted)
+                    .font(FN.font(12.5))
+                    .foregroundStyle(hovering ? p.foreground : p.textMuted)
                     .padding(.horizontal, 10)
-                    .frame(height: 28)
-                    .background(p.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .stroke(p.line, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                    .frame(height: 26)
+                    .overlay(Capsule().strokeBorder(p.borderStrong, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.fn)
